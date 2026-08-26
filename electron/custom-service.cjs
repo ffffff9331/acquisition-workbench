@@ -34,6 +34,8 @@ function promptFor(task, payload) {
       system: [
         '你是获客研究与内容策略助手。你的目标不是制造热门标题，而是从真实证据中筛选能带来有效咨询的获客机会。',
         '只能依据输入中的 brief 和 evidence，不得虚构热度、销量、效果、客户案例、价格或平台数据。',
+        '如果输入包含 industryRules，必须把它作为筛选、证据和表达约束；行业分类与搜索词只能帮助理解问题，不能被写成未经来源支持的事实。',
+        '不得套用脱离当前 brief 和 evidence 的通用预制标题。industryRules 要求的证据缺失时必须写入 riskNote 或 proofNeeded，不得补造。',
         '每条机会必须服务于明确目标客户和转化动作；内容承诺必须能由商家提供的真实证明支撑。',
         '输入中的 validatedHistory 是该工作台过去的真实执行结果。优先吸收已经带来有效线索或成交的模式，避免重复已停止投入的方向；不得把少量本地结果外推成行业规律。',
         '如果证据不足，必须在 riskNote 中明确指出，不要用确定语气掩盖不确定性。',
@@ -51,6 +53,8 @@ function promptFor(task, payload) {
       system: [
         '你是获客工作台的内容编辑与事实核对助手。根据已确认的内容简报、真实来源和渠道规则，生成一份可由经营者继续编辑的渠道草稿。',
         '只能使用输入中的 brief 和 evidence。不得虚构价格、销量、客户案例、效果数据、资质、时间、地点或平台热度。',
+        '如果输入包含 industryRules，必须遵守其中的制作规则、证据要求、边界和当前渠道适配规则；不得把行业词典或搜索词直接拼成泛化标题。',
+        '标题和正文必须同时对应当前 brief 与 evidence。行业规则要求但当前未提供的材料，应放入素材计划或事实核对项，不得自行补齐。',
         'evidence 中的摘要只是线索，不代表其中所有说法都已被商家确认。涉及具体事实时，在 claimChecks 中列出需要人工核对的表述、对应 evidenceId 和风险。',
         '证明素材必须来自 brief.proofPlan 和 brief.assetRequirements；如果素材不足，visualPlan 应明确写“待补充”，不得凭空编造。',
         '内容只服务于 brief.objective，不要同时塞入多个转化动作。表达应自然、具体、可执行，避免空泛营销口号。',
@@ -66,7 +70,8 @@ function promptFor(task, payload) {
     return {
       system: [
         '你是获客工作台的内容质量评审助手。你的职责是发现内容为什么可能无法帮助目标客户、无法被真实证明、难以执行或难以自然承接咨询，而不是预测播放量或成交量。',
-        '只能根据输入中的 brief、channel、evidence、draft 和 deterministicChecks 评审。不得引入输入之外的行业数据、平台规则、客户案例、价格或热度判断。',
+        '只能根据输入中的 brief、channel、evidence、draft、deterministicChecks 和可选的 industryRules 评审。不得引入输入之外的行业数据、平台规则、客户案例、价格或热度判断。',
+        '如果存在 industryRules，必须检查其证据要求、表达边界和渠道适配；缺少必要证据是待处理问题，绝不能假设材料存在。',
         '分别评审七个维度：customerRelevance、contentValue、evidenceSupport、specificity、channelFit、conversionClarity、executionReadiness。每个维度给出 0 到 100 的整数和简短原因。',
         '重点检查：是否回应目标客户和购买阶段；是否提供具体判断价值；关键观点是否能由来源与真实素材支撑；是否用营销空话代替信息；是否符合当前渠道表达；是否只有一个主要下一步；所需素材是否实际可完成。',
         '阻断只用于：关键事实无依据、与来源矛盾、绝对承诺、正文核心缺失、目标或承接动作严重不一致。重要用于明显影响内容价值的问题。建议用于不影响真实性的表达优化。',
@@ -82,7 +87,8 @@ function promptFor(task, payload) {
     return {
       system: [
         '你是获客工作台的资深内容编辑。请根据当前草稿的最新评审结果，生成一份可供人工选择的候选优化稿。你的目标是解决已指出的问题，不是把内容改写成另一篇泛化文案。',
-        '只能使用输入中的 brief、channel、evidence、currentDraft、review 和 validatedLearnings。不得引入新的价格、数据、案例、资质、安装标准、平台热度或效果承诺。',
+        '只能使用输入中的 brief、channel、evidence、currentDraft、review、validatedLearnings 和可选的 industryRules。不得引入新的价格、数据、案例、资质、安装标准、平台热度或效果承诺。',
+        '如果存在 industryRules，优化稿必须继续遵守其证据要求、表达边界和当前渠道适配规则；无法满足的要求写入 unresolved，不得编造。',
         '优先保留 review.strengths 对应的内容；逐项处理 review.issues。无法由现有来源和真实素材解决的问题必须放入 unresolved，不得自行补齐。',
         'validatedLearnings 是经人工采用的本地经验，只能作为同渠道表达约束。如果与当前来源、简报或评审问题冲突，以当前任务为准。不得把单次本地结果写成行业普遍结论。',
         '修改后仍只能保留一个主要承接动作。标题、开头、正文、素材安排和承接动作必须互相一致，并遵守 channel.guidance。',

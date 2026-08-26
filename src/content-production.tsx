@@ -6,6 +6,7 @@ import { channelById, type ChannelId } from './channels'
 import type { GeneratedTopicCandidate, OpportunityChannelPerformance, ResearchEvidence } from './topic-research'
 import { ContentReviewPanel, contentDraftFingerprint, emptyContentQualityReview, evaluateContentRules, normalizeContentQualityReview, type ContentQualityReview, type ContentRevisionProposal } from './content-review'
 import { ContentLearningPanel, contentLearningResultFingerprint, normalizeContentLearnings, type ContentLearningRecord } from './content-learning'
+import { industryRulePayload, type IndustryRulePack } from './industry-rules'
 
 export type ContentTaskStatus = '简报中' | '草稿中' | '待检查' | '已锁定'
 
@@ -59,6 +60,7 @@ export type ContentVariant = {
 export type ContentTask = {
   id: string
   opportunityId: string
+  industryPackId: string
   title: string
   targetCustomer: string
   buyerStage: string
@@ -175,6 +177,7 @@ export function normalizeContentProductionData(value: unknown): ContentProductio
     return {
       id: clean(task.id, 120) || createId('content-task'),
       opportunityId: clean(task.opportunityId, 120),
+      industryPackId: clean(task.industryPackId, 200),
       title: clean(task.title, 200),
       targetCustomer: clean(task.targetCustomer, 600),
       buyerStage: clean(task.buyerStage, 120),
@@ -225,6 +228,7 @@ export function createContentTaskFromOpportunity(opportunity: GeneratedTopicCand
   return {
     id: createId('content-task'),
     opportunityId: opportunity.id,
+    industryPackId: opportunity.industryPackId,
     title: opportunity.title,
     targetCustomer: opportunity.targetCustomer,
     buyerStage: opportunity.buyerStage,
@@ -293,13 +297,14 @@ function formatTime(value: string) {
   return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
 }
 
-export function ContentProductionPanel({ data, opportunities, evidence, enabledChannels, performanceByOpportunity, aiSettings, aiSecrets, onChange, onToast, onOpenAIService, onOfficialUsage, onOpenChannel }: { data: ContentProductionData; opportunities: GeneratedTopicCandidate[]; evidence: ResearchEvidence[]; enabledChannels: ChannelId[]; performanceByOpportunity: Record<string, OpportunityChannelPerformance[]>; aiSettings: AIServiceSettings; aiSecrets: AISecretStatus; onChange: (updater: (current: ContentProductionData) => ContentProductionData) => void; onToast: (message: string) => void; onOpenAIService: () => void; onOfficialUsage: (usage: { pointsCharged: number; balanceAfter: number }) => void; onOpenChannel: (channelId: ChannelId) => void }) {
+export function ContentProductionPanel({ data, opportunities, evidence, industryPack, enabledChannels, performanceByOpportunity, aiSettings, aiSecrets, onChange, onToast, onOpenAIService, onOfficialUsage, onOpenChannel }: { data: ContentProductionData; opportunities: GeneratedTopicCandidate[]; evidence: ResearchEvidence[]; industryPack?: IndustryRulePack; enabledChannels: ChannelId[]; performanceByOpportunity: Record<string, OpportunityChannelPerformance[]>; aiSettings: AIServiceSettings; aiSecrets: AISecretStatus; onChange: (updater: (current: ContentProductionData) => ContentProductionData) => void; onToast: (message: string) => void; onOpenAIService: () => void; onOfficialUsage: (usage: { pointsCharged: number; balanceAfter: number }) => void; onOpenChannel: (channelId: ChannelId) => void }) {
   const [addingChannel, setAddingChannel] = useState<ChannelId>('douyin')
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
   const activeTask = data.tasks.find((task) => task.id === data.activeTaskId) || data.tasks[0]
   const activeVariant = activeTask?.variants.find((variant) => variant.id === activeTask.activeVariantId) || activeTask?.variants[0]
   const activeOpportunity = activeTask ? opportunities.find((item) => item.id === activeTask.opportunityId) : undefined
+  const appliedIndustryPack = activeTask && industryPack && activeTask.industryPackId === industryPack.id ? industryPack : undefined
   const activeLearning = activeVariant ? data.learnings.find((item) => item.taskId === activeTask?.id && item.variantId === activeVariant.id) : undefined
   const validatedLearnings = data.learnings.filter((item) => {
     if (item.status !== '已采用' || activeVariant && item.channelId !== activeVariant.channelId) return false
@@ -426,6 +431,7 @@ export function ContentProductionPanel({ data, opportunities, evidence, enabledC
             proofPlan: activeTask.proofPlan,
             assetRequirements: activeTask.assetRequirements,
           },
+          industryRules: industryRulePayload(appliedIndustryPack),
           evidence: selectedEvidence.map((item) => ({ id: item.id, title: item.title, url: item.url, summary: item.summary, publishedDate: item.publishedDate })),
           channel: { id: activeVariant.channelId, name: channelById(activeVariant.channelId).shortLabel, guidance: channelGuidance(activeVariant.channelId) },
           currentDraft: {
@@ -498,7 +504,7 @@ export function ContentProductionPanel({ data, opportunities, evidence, enabledC
     ctaReady: Boolean(activeVariant.callToAction.trim()),
     humanReady: Object.values(activeVariant.preflight).every(Boolean),
   } : null
-  const localReviewChecks = activeTask && activeVariant ? evaluateContentRules(activeTask, activeVariant, evidence) : []
+  const localReviewChecks = activeTask && activeVariant ? evaluateContentRules(activeTask, activeVariant, evidence, appliedIndustryPack) : []
   const localReviewBlockers = localReviewChecks.filter((item) => item.status === '阻断')
   const aiReviewIsStale = Boolean(activeVariant?.qualityReview.aiReview && activeVariant.qualityReview.aiReview.draftFingerprint !== (activeVariant ? contentDraftFingerprint(activeVariant) : ''))
   const reviewReady = localReviewBlockers.length === 0 && !aiReviewIsStale
@@ -547,6 +553,7 @@ export function ContentProductionPanel({ data, opportunities, evidence, enabledC
         <div className="content-task-toolbar"><div><span className={`status-pill ${activeTask.status === '已锁定' ? 'teal' : activeTask.status === '待检查' ? 'amber' : 'neutral'}`}>{activeTask.status}</span><small>建立于 {formatTime(activeTask.createdAt)}</small></div><button className="icon-button small" type="button" title="移除内容任务" aria-label="移除内容任务" onClick={removeTask}><Trash2 size={14} /></button></div>
         <div className="content-brief-panel">
           <div className="content-section-title"><div><FileText size={15} /><strong>内容简报</strong></div><small>所有渠道共用，行业插件可补充规则，但不改变这套结构。</small></div>
+          {appliedIndustryPack && <div className="content-industry-rule-note"><ShieldCheck size={15} /><div><strong>{appliedIndustryPack.name}</strong><p>本任务的标题、事实、证据和表达边界受此规则包约束；规则不会代替当前来源与商家真实素材。</p></div><span>v{appliedIndustryPack.version}</span></div>}
           <div className="content-brief-grid">
             <label className="field field-wide"><span>内容主题</span><input disabled={taskHasLockedVariant} value={activeTask.title} onChange={(event) => updateTask((task) => ({ ...task, title: event.target.value }))} /></label>
             <label className="field"><span>目标客户</span><textarea disabled={taskHasLockedVariant} rows={3} value={activeTask.targetCustomer} onChange={(event) => updateTask((task) => ({ ...task, targetCustomer: event.target.value }))} /></label>
@@ -579,7 +586,7 @@ export function ContentProductionPanel({ data, opportunities, evidence, enabledC
 
             {activeVariant.claimChecks.length > 0 && <div className="claim-checks"><div><ShieldCheck size={15} /><strong>AI 提出的事实核对项</strong><small>这些提示不能替代人工核实。</small></div>{activeVariant.claimChecks.map((claim, index) => { const source = evidence.find((item) => item.id === claim.evidenceId); return <article key={`${claim.statement}-${index}`}><span>{index + 1}</span><div><strong>{claim.statement}</strong><p>{claim.risk || '发布前确认这句话有真实依据。'}</p>{source && <button type="button" onClick={() => window.open(source.url, '_blank', 'noopener,noreferrer')}>{source.title}</button>}</div></article> })}</div>}
 
-            <ContentReviewPanel task={activeTask} variant={activeVariant} evidence={evidence} aiSettings={aiSettings} aiSecrets={aiSecrets} channelGuidance={channelGuidance(activeVariant.channelId)} validatedLearnings={validatedLearnings} onUpdateVariant={updateVariant} onApplyRevision={applyRevision} onToast={onToast} onOpenAIService={onOpenAIService} onOfficialUsage={onOfficialUsage} />
+            <ContentReviewPanel task={activeTask} variant={activeVariant} evidence={evidence} industryPack={appliedIndustryPack} aiSettings={aiSettings} aiSecrets={aiSecrets} channelGuidance={channelGuidance(activeVariant.channelId)} validatedLearnings={validatedLearnings} onUpdateVariant={updateVariant} onApplyRevision={applyRevision} onToast={onToast} onOpenAIService={onOpenAIService} onOfficialUsage={onOfficialUsage} />
 
             <div className="content-preflight"><div className="content-preflight-head"><div><CircleCheckBig size={16} /><strong>发布前检查</strong></div><small>全部通过后，锁定本次最终版本。</small></div><div className="content-preflight-list">
               <span className={readiness?.evidenceReady ? 'done' : ''}><Check size={13} /><b>来源证据</b><small>{readiness?.evidenceReady ? '已保留真实来源' : '缺少可追溯来源'}</small></span>

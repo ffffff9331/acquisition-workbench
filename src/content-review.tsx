@@ -5,6 +5,7 @@ import type { AISecretStatus, AIServiceSettings } from './ai-service'
 import { channelById } from './channels'
 import type { ContentTask, ContentVariant } from './content-production'
 import type { ResearchEvidence } from './topic-research'
+import { evaluateIndustryContentRules, industryRulePayload, type IndustryRulePack } from './industry-rules'
 
 export type ContentReviewSeverity = '阻断' | '重要' | '建议'
 export type ContentReviewVerdict = '可以进入人工确认' | '修改后再确认' | '不建议发布'
@@ -172,7 +173,7 @@ function uniqueActions(value: string) {
   return actionTerms.filter((term) => value.includes(term))
 }
 
-export function evaluateContentRules(task: ContentTask, variant: ContentVariant, evidence: ResearchEvidence[]): ContentRuleCheck[] {
+export function evaluateContentRules(task: ContentTask, variant: ContentVariant, evidence: ResearchEvidence[], industryPack?: IndustryRulePack): ContentRuleCheck[] {
   const fullDraft = [variant.title, variant.hook, variant.outline, variant.body, variant.callToAction, variant.coverCopy, variant.visualPlan].join('\n')
   const selectedEvidence = evidence.filter((item) => task.evidenceIds.includes(item.id))
   const validClaimLinks = variant.claimChecks.filter((claim) => selectedEvidence.some((item) => item.id === claim.evidenceId)).length
@@ -183,7 +184,7 @@ export function evaluateContentRules(task: ContentTask, variant: ContentVariant,
   const bodyLength = variant.body.replace(/\s+/g, '').length
   const visualLines = lineCount(variant.visualPlan)
 
-  return [
+  const baseChecks: ContentRuleCheck[] = [
     { id: 'body', label: '正文完整', status: bodyLength >= 100 ? '通过' : bodyLength ? '提醒' : '阻断', message: bodyLength >= 100 ? `正文已有 ${bodyLength} 字。` : bodyLength ? `正文只有 ${bodyLength} 字，可能无法讲清问题和证明。` : '还没有正文或脚本。', suggestion: '至少讲清客户问题、判断方法、真实证明和下一步。' },
     { id: 'evidence', label: '来源可追溯', status: selectedEvidence.length ? '通过' : '阻断', message: selectedEvidence.length ? `已关联 ${selectedEvidence.length} 条真实来源。` : '没有可追溯的真实来源。', suggestion: '返回获客机会研究，选择与本条内容直接相关的来源。' },
     { id: 'proof', label: '证明方案', status: task.proofPlan.trim() && task.assetRequirements.trim() ? '通过' : '阻断', message: task.proofPlan.trim() && task.assetRequirements.trim() ? '已经写明证明方式和真实素材。' : '证明方式或真实素材要求不完整。', suggestion: '说明每个关键观点由什么实拍、案例、数据或专业依据证明。' },
@@ -194,6 +195,7 @@ export function evaluateContentRules(task: ContentTask, variant: ContentVariant,
     { id: 'claims', label: '事实核对可追踪', status: !variant.claimChecks.length || validClaimLinks === variant.claimChecks.length ? '通过' : '提醒', message: !variant.claimChecks.length ? '没有单独列出的高风险事实项。' : validClaimLinks === variant.claimChecks.length ? `${validClaimLinks} 个事实核对项都关联了来源。` : `${variant.claimChecks.length - validClaimLinks} 个事实核对项没有关联当前来源。`, suggestion: '为事实、数字、案例和效果表述关联来源，或删除无法证明的说法。' },
     { id: 'specificity', label: '避免营销空话', status: vagueTerms.length >= 3 ? '提醒' : '通过', message: vagueTerms.length >= 3 ? `发现较多泛化表达：${vagueTerms.join('、')}。` : '没有发现大量常见营销套话。', suggestion: '用具体场景、步骤、判断标准和真实证明替代抽象形容词。' },
   ]
+  return [...baseChecks, ...evaluateIndustryContentRules(industryPack, fullDraft, task.proofPlan, task.assetRequirements)]
 }
 
 export function contentRuleScore(checks: ContentRuleCheck[]) {
@@ -227,11 +229,11 @@ function reviewTone(verdict: ContentReviewVerdict) {
   return 'review'
 }
 
-export function ContentReviewPanel({ task, variant, evidence, aiSettings, aiSecrets, channelGuidance, validatedLearnings, onUpdateVariant, onApplyRevision, onToast, onOpenAIService, onOfficialUsage }: { task: ContentTask; variant: ContentVariant; evidence: ResearchEvidence[]; aiSettings: AIServiceSettings; aiSecrets: AISecretStatus; channelGuidance: string; validatedLearnings: Array<{ decision: string; summary: string; keepRules: string[]; changeRules: string[]; avoidRules: string[]; nextGenerationRules: string[] }>; onUpdateVariant: (updater: (variant: ContentVariant) => ContentVariant) => void; onApplyRevision: (revision: ContentRevisionProposal) => void; onToast: (message: string) => void; onOpenAIService: () => void; onOfficialUsage: (usage: { pointsCharged: number; balanceAfter: number }) => void }) {
+export function ContentReviewPanel({ task, variant, evidence, industryPack, aiSettings, aiSecrets, channelGuidance, validatedLearnings, onUpdateVariant, onApplyRevision, onToast, onOpenAIService, onOfficialUsage }: { task: ContentTask; variant: ContentVariant; evidence: ResearchEvidence[]; industryPack?: IndustryRulePack; aiSettings: AIServiceSettings; aiSecrets: AISecretStatus; channelGuidance: string; validatedLearnings: Array<{ decision: string; summary: string; keepRules: string[]; changeRules: string[]; avoidRules: string[]; nextGenerationRules: string[] }>; onUpdateVariant: (updater: (variant: ContentVariant) => ContentVariant) => void; onApplyRevision: (revision: ContentRevisionProposal) => void; onToast: (message: string) => void; onOpenAIService: () => void; onOfficialUsage: (usage: { pointsCharged: number; balanceAfter: number }) => void }) {
   const [reviewing, setReviewing] = useState(false)
   const [revising, setRevising] = useState(false)
   const [error, setError] = useState('')
-  const localChecks = useMemo(() => evaluateContentRules(task, variant, evidence), [task, variant, evidence])
+  const localChecks = useMemo(() => evaluateContentRules(task, variant, evidence, industryPack), [task, variant, evidence, industryPack])
   const localScore = contentRuleScore(localChecks)
   const blockers = localChecks.filter((item) => item.status === '阻断')
   const warnings = localChecks.filter((item) => item.status === '提醒')
@@ -260,6 +262,7 @@ export function ContentReviewPanel({ task, variant, evidence, aiSettings, aiSecr
         task: 'content_review',
         payload: {
           brief: { title: task.title, targetCustomer: task.targetCustomer, buyerStage: task.buyerStage, objective: task.objective, audienceGain: task.audienceGain, coreClaim: task.coreClaim, proofPlan: task.proofPlan, assetRequirements: task.assetRequirements },
+          industryRules: industryRulePayload(industryPack),
           channel: { id: variant.channelId, name: channelById(variant.channelId).shortLabel },
           evidence: selectedEvidence.map((item) => ({ id: item.id, title: item.title, summary: item.summary, publishedDate: item.publishedDate })),
           draft: { title: variant.title, hook: variant.hook, outline: variant.outline, body: variant.body, callToAction: variant.callToAction, coverCopy: variant.coverCopy, visualPlan: variant.visualPlan },
@@ -307,6 +310,7 @@ export function ContentReviewPanel({ task, variant, evidence, aiSettings, aiSecr
         task: 'content_revision',
         payload: {
           brief: { title: task.title, targetCustomer: task.targetCustomer, buyerStage: task.buyerStage, objective: task.objective, audienceGain: task.audienceGain, coreClaim: task.coreClaim, proofPlan: task.proofPlan, assetRequirements: task.assetRequirements },
+          industryRules: industryRulePayload(industryPack),
           channel: { id: variant.channelId, name: channelById(variant.channelId).shortLabel, guidance: channelGuidance },
           evidence: selectedEvidence.map((item) => ({ id: item.id, title: item.title, summary: item.summary, publishedDate: item.publishedDate })),
           currentDraft: { title: variant.title, hook: variant.hook, outline: variant.outline, body: variant.body, callToAction: variant.callToAction, coverCopy: variant.coverCopy, visualPlan: variant.visualPlan, claimChecks: variant.claimChecks },

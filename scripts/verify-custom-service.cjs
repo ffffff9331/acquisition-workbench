@@ -41,11 +41,12 @@ async function main() {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const baseUrl = `http://127.0.0.1:${server.address().port}/v1`
   const client = createCustomServiceClient({ getApiKey: () => 'custom-test-key' })
+  const industryRules = { id: 'bathroom-industry-rules-v2', industry: '卫浴门店', productionRules: ['标题必须对应当前证据'], evidenceRules: [{ claimType: '尺寸', requiredEvidence: ['现场尺寸'] }] }
   try {
     const connection = await client.test(baseUrl)
     assert.equal(connection.ok, true)
 
-    const generation = await client.generate({ baseUrl, model: 'test-model', task: 'acquisition_opportunities', payload: { brief: { offer: '测试服务', targetCustomer: '测试客户', conversionGoal: '私信咨询' }, evidence: [{ id: 'source-1', title: '真实来源' }], validatedHistory: [{ title: '历史机会', decision: '继续投入', results: [{ channel: 'douyin', qualifiedLeads: 3, customers: 1 }] }] } })
+    const generation = await client.generate({ baseUrl, model: 'test-model', task: 'acquisition_opportunities', payload: { brief: { offer: '测试服务', targetCustomer: '测试客户', conversionGoal: '私信咨询' }, industryRules, evidence: [{ id: 'source-1', title: '真实来源' }], validatedHistory: [{ title: '历史机会', decision: '继续投入', results: [{ channel: 'douyin', qualifiedLeads: 3, customers: 1 }] }] } })
     assert.equal(generation.ok, true)
     assert.equal(generation.data.output.topics[0].title, '证据型获客机会')
     assert.equal(observed.length, 2)
@@ -54,29 +55,34 @@ async function main() {
     assert.equal(observed[1].body.response_format.type, 'json_object')
     assert.equal(observed[1].body.messages[0].content.includes('不是制造热门标题'), true)
     assert.equal(observed[1].body.messages[0].content.includes('validatedHistory'), true)
+    assert.equal(observed[1].body.messages[0].content.includes('不得套用脱离当前 brief'), true)
     assert.equal(observed[1].body.messages[1].content.includes('继续投入'), true)
+    assert.equal(observed[1].body.messages[1].content.includes('bathroom-industry-rules-v2'), true)
     assert.equal(Object.prototype.hasOwnProperty.call(generation.data, 'usage'), false)
 
-    const contentGeneration = await client.generate({ baseUrl, model: 'test-model', task: 'content_draft', payload: { brief: { title: '测试内容', targetCustomer: '测试客户', objective: '私信咨询', proofPlan: '真实案例' }, evidence: [{ id: 'source-1', title: '真实来源' }], channel: { id: 'douyin', guidance: '短视频表达' } } })
+    const contentGeneration = await client.generate({ baseUrl, model: 'test-model', task: 'content_draft', payload: { brief: { title: '测试内容', targetCustomer: '测试客户', objective: '私信咨询', proofPlan: '真实案例' }, industryRules, evidence: [{ id: 'source-1', title: '真实来源' }], channel: { id: 'douyin', guidance: '短视频表达' } } })
     assert.equal(contentGeneration.ok, true)
     assert.equal(contentGeneration.data.output.draft.title, '证据型渠道草稿')
     assert.equal(observed[2].body.messages[0].content.includes('内容编辑与事实核对助手'), true)
     assert.equal(observed[2].body.messages[0].content.includes('不得虚构价格'), true)
     assert.equal(observed[2].body.messages[1].content.includes('真实来源'), true)
+    assert.equal(observed[2].body.messages[1].content.includes('标题必须对应当前证据'), true)
 
-    const contentReview = await client.generate({ baseUrl, model: 'test-model', task: 'content_review', payload: { brief: { title: '测试内容', targetCustomer: '测试客户', objective: '私信咨询' }, evidence: [{ id: 'source-1', title: '真实来源' }], channel: { id: 'douyin' }, draft: { body: '测试正文' }, deterministicChecks: [] } })
+    const contentReview = await client.generate({ baseUrl, model: 'test-model', task: 'content_review', payload: { brief: { title: '测试内容', targetCustomer: '测试客户', objective: '私信咨询' }, industryRules, evidence: [{ id: 'source-1', title: '真实来源' }], channel: { id: 'douyin' }, draft: { body: '测试正文' }, deterministicChecks: [] } })
     assert.equal(contentReview.ok, true)
     assert.equal(contentReview.data.output.review.score, 84)
     assert.equal(contentReview.data.output.review.dimensions.length, 7)
     assert.equal(observed[3].body.messages[0].content.includes('不代表流量'), true)
     assert.equal(observed[3].body.messages[0].content.includes('customerRelevance'), true)
     assert.equal(observed[3].body.messages[1].content.includes('deterministicChecks'), true)
+    assert.equal(observed[3].body.messages[1].content.includes('requiredEvidence'), true)
 
-    const contentRevision = await client.generate({ baseUrl, model: 'test-model', task: 'content_revision', payload: { brief: { title: '测试内容' }, evidence: [{ id: 'source-1', title: '真实来源' }], channel: { id: 'douyin', guidance: '短视频表达' }, currentDraft: { body: '测试正文' }, review: contentReview.data.output.review, validatedLearnings: [{ nextGenerationRules: ['保留具体步骤'] }] } })
+    const contentRevision = await client.generate({ baseUrl, model: 'test-model', task: 'content_revision', payload: { brief: { title: '测试内容' }, industryRules, evidence: [{ id: 'source-1', title: '真实来源' }], channel: { id: 'douyin', guidance: '短视频表达' }, currentDraft: { body: '测试正文' }, review: contentReview.data.output.review, validatedLearnings: [{ nextGenerationRules: ['保留具体步骤'] }] } })
     assert.equal(contentRevision.ok, true)
     assert.equal(contentRevision.data.output.revision.draft.title, '证据型优化稿')
     assert.equal(observed[4].body.messages[0].content.includes('不得引入新的价格'), true)
     assert.equal(observed[4].body.messages[1].content.includes('validatedLearnings'), true)
+    assert.equal(observed[4].body.messages[1].content.includes('bathroom-industry-rules-v2'), true)
 
     const contentLearning = await client.generate({ baseUrl, model: 'test-model', task: 'content_learning', payload: { brief: { title: '测试内容' }, channel: { id: 'douyin' }, finalDraft: { body: '最终正文' }, humanDecision: '调整后再试', observedResults: [{ executed: true, platformInquiries: 3, qualifiedLeads: 1, customers: 0 }] } })
     assert.equal(contentLearning.ok, true)

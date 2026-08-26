@@ -22,16 +22,17 @@ import {
 } from 'lucide-react'
 import { AIServiceDialog, type AISecretStatus, type AIServiceSettings, loadAIServiceSettings } from './ai-service'
 import { CreditAccountDialog, type CreditAccountSnapshot } from './credits'
-import { channelById, channelDefinitions, channelStatusOptions, contentPackageById, contentPackages, nextChannelStatus, type ChannelDefinition, type ChannelId } from './channels'
+import { channelById, channelDefinitions, channelStatusOptions, nextChannelStatus, type ChannelDefinition, type ChannelId } from './channels'
 import { DouyinWorkspace, douyinSourceOptions, emptyDouyinData, normalizeDouyinData, type DouyinData } from './douyin'
 import { XiaohongshuWorkspace, emptyXiaohongshuData, normalizeXiaohongshuData, xiaohongshuSourceOptions, type XiaohongshuData } from './xiaohongshu'
 import { WechatWorkspace, emptyWechatData, normalizeWechatData, wechatSourceOptions, type WechatData } from './wechat'
 import { OfflineWorkspace, emptyOfflineData, normalizeOfflineData, offlineSourceOptions, type OfflineData } from './offline'
 import { ReferralWorkspace, emptyReferralData, normalizeReferralData, referralSourceOptions, type ReferralData } from './referral'
 import { BilibiliWorkspace, bilibiliSourceOptions, emptyBilibiliData, normalizeBilibiliData, type BilibiliData } from './bilibili'
-import { BATHROOM_PACKAGE_ID, BathroomContentPackPanel, createBathroomPackDraft } from './bathroom-content'
+import { BATHROOM_RULE_PACK_ID, LEGACY_BATHROOM_PACKAGE_ID, BathroomIndustryRulePanel, bathroomIndustryRulePack } from './bathroom-content'
 import { emptyTopicResearchData, normalizeTopicResearchData, TopicResearchPanel, type GeneratedTopicCandidate, type OpportunityChannelPerformance, type TopicResearchData } from './topic-research'
 import { ContentProductionPanel, emptyContentProductionData, normalizeContentProductionData, type ContentProductionData } from './content-production'
+import type { IndustryRulePack } from './industry-rules'
 
 type View = 'workspace' | 'acquisition' | 'leads' | 'intents' | 'customers' | 'review'
 type Stage = 'lead' | 'intent' | 'customer' | 'lost'
@@ -79,10 +80,10 @@ type ChannelTask = {
 
 type SourceOption = { id: string; label: string }
 
-type WorkspaceData = { records: CustomerRecord[]; enabledChannels: ChannelId[]; installedContentPackages: string[]; channelTasks: ChannelTask[]; topicResearch: TopicResearchData; contentProduction: ContentProductionData; douyin: DouyinData; xiaohongshu: XiaohongshuData; wechat: WechatData; offline: OfflineData; referral: ReferralData; bilibili: BilibiliData }
+type WorkspaceData = { records: CustomerRecord[]; enabledChannels: ChannelId[]; installedIndustryPacks: string[]; channelTasks: ChannelTask[]; topicResearch: TopicResearchData; contentProduction: ContentProductionData; douyin: DouyinData; xiaohongshu: XiaohongshuData; wechat: WechatData; offline: OfflineData; referral: ReferralData; bilibili: BilibiliData }
 
 const STORAGE_KEY = 'acquisition-workbench-core-v1'
-const emptyData: WorkspaceData = { records: [], enabledChannels: [], installedContentPackages: [], channelTasks: [], topicResearch: emptyTopicResearchData, contentProduction: emptyContentProductionData, douyin: emptyDouyinData, xiaohongshu: emptyXiaohongshuData, wechat: emptyWechatData, offline: emptyOfflineData, referral: emptyReferralData, bilibili: emptyBilibiliData }
+const emptyData: WorkspaceData = { records: [], enabledChannels: [], installedIndustryPacks: [], channelTasks: [], topicResearch: emptyTopicResearchData, contentProduction: emptyContentProductionData, douyin: emptyDouyinData, xiaohongshu: emptyXiaohongshuData, wechat: emptyWechatData, offline: emptyOfflineData, referral: emptyReferralData, bilibili: emptyBilibiliData }
 
 const navItems: Array<{ id: View; label: string; icon: ReactNode }> = [
   { id: 'workspace', label: '工作台', icon: <Target size={18} /> },
@@ -107,12 +108,12 @@ function loadData(): WorkspaceData {
   try {
     const saved = window.localStorage.getItem(STORAGE_KEY)
     if (!saved) return emptyData
-    const parsed = JSON.parse(saved) as Partial<WorkspaceData> & { enabledChannels?: unknown }
+    const parsed = JSON.parse(saved) as Partial<WorkspaceData> & { enabledChannels?: unknown; installedContentPackages?: unknown }
     if (!Array.isArray(parsed.records)) return emptyData
     const channelTasks: ChannelTask[] = Array.isArray(parsed.channelTasks) ? parsed.channelTasks.filter((task) => task && typeof task.title === 'string' && channelDefinitions.some((definition) => definition.id === task.channelId)).map((task) => ({
       id: task.id || `task-${Date.now()}`,
       channelId: task.channelId as ChannelId,
-      contentPackageId: contentPackageById(task.contentPackageId)?.id || '',
+      contentPackageId: task.contentPackageId === LEGACY_BATHROOM_PACKAGE_ID ? BATHROOM_RULE_PACK_ID : task.contentPackageId || '',
       title: task.title,
       goal: task.goal || '',
       callToAction: task.callToAction || '',
@@ -131,7 +132,8 @@ function loadData(): WorkspaceData {
       inquiryCount: typeof task.inquiryCount === 'number' ? task.inquiryCount : 0,
       createdAt: task.createdAt || todayISO(),
     })) : []
-    const installedContentPackages = Array.isArray(parsed.installedContentPackages) ? parsed.installedContentPackages.filter((packageId): packageId is string => packageId === BATHROOM_PACKAGE_ID || contentPackages.some((contentPackage) => contentPackage.id === packageId)) : []
+    const savedIndustryPacks = Array.isArray(parsed.installedIndustryPacks) ? parsed.installedIndustryPacks : Array.isArray(parsed.installedContentPackages) ? parsed.installedContentPackages : []
+    const installedIndustryPacks = [...new Set(savedIndustryPacks.map((packageId) => packageId === LEGACY_BATHROOM_PACKAGE_ID ? BATHROOM_RULE_PACK_ID : packageId).filter((packageId): packageId is string => packageId === BATHROOM_RULE_PACK_ID))]
     const douyin = normalizeDouyinData(parsed.douyin, channelTasks)
     const xiaohongshu = normalizeXiaohongshuData(parsed.xiaohongshu, channelTasks)
     const wechat = normalizeWechatData(parsed.wechat, channelTasks)
@@ -153,7 +155,7 @@ function loadData(): WorkspaceData {
         createdAt: record.createdAt || todayISO(),
       })),
       enabledChannels: normalizeEnabledChannels(parsed.enabledChannels, channelTasks, douyin, xiaohongshu, wechat, offline, referral, bilibili),
-      installedContentPackages,
+      installedIndustryPacks,
       channelTasks,
       topicResearch,
       contentProduction,
@@ -301,14 +303,7 @@ function App() {
   const intentCount = data.records.filter((record) => record.stage === 'intent').length
   const customerCount = data.records.filter((record) => record.stage === 'customer').length
   const enabledChannels = channelDefinitions.filter((channel) => data.enabledChannels.includes(channel.id))
-  const bathroomAppliedChannels: ChannelId[] = [
-    data.douyin.ideas.some((item) => item.contentPackageId === BATHROOM_PACKAGE_ID) ? 'douyin' : null,
-    data.xiaohongshu.ideas.some((item) => item.contentPackageId === BATHROOM_PACKAGE_ID) ? 'xiaohongshu' : null,
-    data.wechat.tasks.some((item) => item.contentPackageId === BATHROOM_PACKAGE_ID) ? 'wechat' : null,
-    data.offline.tasks.some((item) => item.contentPackageId === BATHROOM_PACKAGE_ID) ? 'offline' : null,
-    data.referral.relations.some((item) => item.contentPackageId === BATHROOM_PACKAGE_ID) ? 'referral' : null,
-    data.bilibili.ideas.some((item) => item.contentPackageId === BATHROOM_PACKAGE_ID) ? 'bilibili' : null,
-  ].filter((channelId): channelId is ChannelId => channelId !== null)
+  const activeIndustryPack = data.installedIndustryPacks.includes(BATHROOM_RULE_PACK_ID) ? bathroomIndustryRulePack : undefined
   const opportunityPerformance = useMemo<Record<string, OpportunityChannelPerformance[]>>(() => {
     const result: Record<string, OpportunityChannelPerformance[]> = {}
     const linkedRecords = (sourceCodes: string[]) => {
@@ -480,38 +475,9 @@ function App() {
     showToast(`${channel.shortLabel}已启用`)
   }
 
-  const installBathroomContentPack = () => {
-    setData((current) => current.installedContentPackages.includes(BATHROOM_PACKAGE_ID) ? current : { ...current, installedContentPackages: [...current.installedContentPackages, BATHROOM_PACKAGE_ID] })
-    showToast('卫浴行业内容包已安装')
-  }
-
-  const applyBathroomContent = (channelId: ChannelId, referralName = '') => {
-    if (!data.installedContentPackages.includes(BATHROOM_PACKAGE_ID)) {
-      showToast('请先安装卫浴行业内容包')
-      return
-    }
-    if (!data.enabledChannels.includes(channelId)) {
-      showToast(`请先启用${channelById(channelId).shortLabel}`)
-      return
-    }
-    if (bathroomAppliedChannels.includes(channelId)) {
-      showToast('这个渠道已经添加过卫浴演示草稿')
-      return
-    }
-    const draft = createBathroomPackDraft(channelId, referralName)
-    if (!draft) {
-      showToast(channelId === 'referral' ? '请先填写推荐人或合作方称呼' : '暂时无法添加这份草稿')
-      return
-    }
-    setData((current) => {
-      if (draft.channelId === 'douyin') return { ...current, douyin: { ...current.douyin, ideas: [draft.item, ...current.douyin.ideas] } }
-      if (draft.channelId === 'xiaohongshu') return { ...current, xiaohongshu: { ...current.xiaohongshu, ideas: [draft.item, ...current.xiaohongshu.ideas] } }
-      if (draft.channelId === 'wechat') return { ...current, wechat: { ...current.wechat, tasks: [draft.item, ...current.wechat.tasks] } }
-      if (draft.channelId === 'offline') return { ...current, offline: { ...current.offline, tasks: [draft.item, ...current.offline.tasks] } }
-      if (draft.channelId === 'referral') return { ...current, referral: { ...current.referral, relations: [draft.item, ...current.referral.relations] } }
-      return { ...current, bilibili: { ...current.bilibili, ideas: [draft.item, ...current.bilibili.ideas] } }
-    })
-    showToast(`卫浴草稿已添加到${channelById(channelId).shortLabel}`)
+  const installBathroomIndustryRules = () => {
+    setData((current) => current.installedIndustryPacks.includes(BATHROOM_RULE_PACK_ID) ? current : { ...current, installedIndustryPacks: [...current.installedIndustryPacks, BATHROOM_RULE_PACK_ID] })
+    showToast('卫浴行业规则已启用')
   }
 
   const adoptResearchOpportunity = (opportunity: GeneratedTopicCandidate, channelId: ChannelId) => {
@@ -520,19 +486,19 @@ function App() {
     setData((current) => {
       const enabledChannels = current.enabledChannels.includes(channelId) ? current.enabledChannels : [...current.enabledChannels, channelId]
       if (channelId === 'douyin') {
-        return { ...current, enabledChannels, douyin: { ...current.douyin, ideas: [{ id, contentPackageId: '', title: opportunity.title, customerProblem: opportunity.customerQuestion || opportunity.demandSignal, contentDirection: opportunity.contentAngle, targetAction: opportunity.callToAction, sourceType: 'AI', tags: [opportunity.buyerStage, '联网研究'].filter(Boolean).join('，'), status: '待判断', createdAt }, ...current.douyin.ideas] } }
+        return { ...current, enabledChannels, douyin: { ...current.douyin, ideas: [{ id, contentPackageId: opportunity.industryPackId, title: opportunity.title, customerProblem: opportunity.customerQuestion || opportunity.demandSignal, contentDirection: opportunity.contentAngle, targetAction: opportunity.callToAction, sourceType: 'AI', tags: [opportunity.buyerStage, '联网研究'].filter(Boolean).join('，'), status: '待判断', createdAt }, ...current.douyin.ideas] } }
       }
       if (channelId === 'xiaohongshu') {
-        return { ...current, enabledChannels, xiaohongshu: { ...current.xiaohongshu, ideas: [{ id, contentPackageId: '', title: opportunity.title, customerProblem: opportunity.customerQuestion || opportunity.demandSignal, contentDirection: opportunity.contentAngle, targetAction: opportunity.callToAction, sourceType: 'AI', tags: [opportunity.buyerStage, '联网研究'].filter(Boolean).join('，'), status: '待判断', createdAt }, ...current.xiaohongshu.ideas] } }
+        return { ...current, enabledChannels, xiaohongshu: { ...current.xiaohongshu, ideas: [{ id, contentPackageId: opportunity.industryPackId, title: opportunity.title, customerProblem: opportunity.customerQuestion || opportunity.demandSignal, contentDirection: opportunity.contentAngle, targetAction: opportunity.callToAction, sourceType: 'AI', tags: [opportunity.buyerStage, '联网研究'].filter(Boolean).join('，'), status: '待判断', createdAt }, ...current.xiaohongshu.ideas] } }
       }
       if (channelId === 'bilibili') {
-        return { ...current, enabledChannels, bilibili: { ...current.bilibili, ideas: [{ id, contentPackageId: '', title: opportunity.title, audienceQuestion: opportunity.customerQuestion || opportunity.demandSignal, viewerGain: opportunity.keyPromise, proofMaterial: opportunity.proofNeeded, seriesName: '', targetAction: opportunity.callToAction, sourceType: 'AI', tags: [opportunity.buyerStage, '联网研究'].filter(Boolean).join('，'), status: '待判断', createdAt }, ...current.bilibili.ideas] } }
+        return { ...current, enabledChannels, bilibili: { ...current.bilibili, ideas: [{ id, contentPackageId: opportunity.industryPackId, title: opportunity.title, audienceQuestion: opportunity.customerQuestion || opportunity.demandSignal, viewerGain: opportunity.keyPromise, proofMaterial: opportunity.proofNeeded, seriesName: '', targetAction: opportunity.callToAction, sourceType: 'AI', tags: [opportunity.buyerStage, '联网研究'].filter(Boolean).join('，'), status: '待判断', createdAt }, ...current.bilibili.ideas] } }
       }
       if (channelId === 'wechat') {
-        return { ...current, enabledChannels, wechat: { ...current.wechat, tasks: [{ id, contentPackageId: '', actionType: '朋友圈触达', title: opportunity.title, goal: opportunity.keyPromise, audience: opportunity.targetCustomer, opening: opportunity.title, contentBody: opportunity.contentAngle, callToAction: opportunity.callToAction, assetChecklist: opportunity.proofNeeded, owner: current.wechat.settings.defaultOwner, plannedAt: '', status: '准备中', checklist: { audienceReady: Boolean(opportunity.targetCustomer), contentReady: false, materialsReady: false, ctaReady: Boolean(opportunity.callToAction), scopeChecked: false, executionChecked: false }, createdAt }, ...current.wechat.tasks] } }
+        return { ...current, enabledChannels, wechat: { ...current.wechat, tasks: [{ id, contentPackageId: opportunity.industryPackId, actionType: '朋友圈触达', title: opportunity.title, goal: opportunity.keyPromise, audience: opportunity.targetCustomer, opening: opportunity.title, contentBody: opportunity.contentAngle, callToAction: opportunity.callToAction, assetChecklist: opportunity.proofNeeded, owner: current.wechat.settings.defaultOwner, plannedAt: '', status: '准备中', checklist: { audienceReady: Boolean(opportunity.targetCustomer), contentReady: false, materialsReady: false, ctaReady: Boolean(opportunity.callToAction), scopeChecked: false, executionChecked: false }, createdAt }, ...current.wechat.tasks] } }
       }
       if (channelId === 'offline') {
-        return { ...current, enabledChannels, offline: { ...current.offline, tasks: [{ id, contentPackageId: '', activityType: '到店活动', title: opportunity.title, goal: opportunity.callToAction, audience: opportunity.targetCustomer, location: current.topicResearch.brief.serviceArea, startAt: '', endAt: '', owner: current.offline.settings.defaultOwner, staffPlan: '', materialChecklist: opportunity.proofNeeded, onSiteProcess: opportunity.contentAngle, registrationMethod: opportunity.leadMagnet, callToAction: opportunity.callToAction, followUpPlan: '活动结束后 24 小时内联系已登记客户', status: '策划中', checklist: { scheduleReady: false, staffReady: false, materialsReady: false, processReady: false, registrationReady: false, followUpReady: false }, createdAt }, ...current.offline.tasks] } }
+        return { ...current, enabledChannels, offline: { ...current.offline, tasks: [{ id, contentPackageId: opportunity.industryPackId, activityType: '到店活动', title: opportunity.title, goal: opportunity.callToAction, audience: opportunity.targetCustomer, location: current.topicResearch.brief.serviceArea, startAt: '', endAt: '', owner: current.offline.settings.defaultOwner, staffPlan: '', materialChecklist: opportunity.proofNeeded, onSiteProcess: opportunity.contentAngle, registrationMethod: opportunity.leadMagnet, callToAction: opportunity.callToAction, followUpPlan: '活动结束后 24 小时内联系已登记客户', status: '策划中', checklist: { scheduleReady: false, staffReady: false, materialsReady: false, processReady: false, registrationReady: false, followUpReady: false }, createdAt }, ...current.offline.tasks] } }
       }
       return { ...current, enabledChannels }
     })
@@ -628,7 +594,7 @@ function App() {
       if (channel.id === 'bilibili') return <BilibiliWorkspace data={data.bilibili} records={data.records} onChange={(updater) => setData((current) => ({ ...current, bilibili: updater(current.bilibili) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source)} onToast={showToast} />
       return <ChannelWorkspacePage channel={channel} tasks={data.channelTasks.filter((task) => task.channelId === channel.id)} records={data.records} onBack={() => setActiveChannelId(null)} onAddTask={() => setTaskChannelId(channel.id)} onEditTask={setEditingTask} onAdvanceTask={advanceChannelTask} onAddLead={() => openRecordDialog('lead')} />
     }
-    if (view === 'acquisition') return <AcquisitionPage topicResearch={data.topicResearch} contentProduction={data.contentProduction} aiSettings={aiSettings} aiSecrets={aiSecrets} enabledChannels={data.enabledChannels} performanceByOpportunity={opportunityPerformance} bathroomPackInstalled={data.installedContentPackages.includes(BATHROOM_PACKAGE_ID)} bathroomAppliedChannels={bathroomAppliedChannels} onTopicResearchChange={(updater) => setData((current) => ({ ...current, topicResearch: updater(current.topicResearch) }))} onContentProductionChange={(updater) => setData((current) => ({ ...current, contentProduction: updater(current.contentProduction) }))} onToast={showToast} onOpenAIService={() => setAIServiceOpen(true)} onOfficialUsage={(usage) => setCreditAccount((current) => current ? { ...current, balance: usage.balanceAfter, updatedAt: '' } : current)} onAdoptOpportunity={adoptResearchOpportunity} onInstallBathroomPack={installBathroomContentPack} onApplyBathroomContent={applyBathroomContent} onEnableChannel={enableChannel} onOpenChannel={setActiveChannelId} />
+    if (view === 'acquisition') return <AcquisitionPage topicResearch={data.topicResearch} contentProduction={data.contentProduction} industryPack={activeIndustryPack} aiSettings={aiSettings} aiSecrets={aiSecrets} enabledChannels={data.enabledChannels} performanceByOpportunity={opportunityPerformance} bathroomRulesEnabled={Boolean(activeIndustryPack)} onTopicResearchChange={(updater) => setData((current) => ({ ...current, topicResearch: updater(current.topicResearch) }))} onContentProductionChange={(updater) => setData((current) => ({ ...current, contentProduction: updater(current.contentProduction) }))} onToast={showToast} onOpenAIService={() => setAIServiceOpen(true)} onOfficialUsage={(usage) => setCreditAccount((current) => current ? { ...current, balance: usage.balanceAfter, updatedAt: '' } : current)} onAdoptOpportunity={adoptResearchOpportunity} onEnableBathroomRules={installBathroomIndustryRules} onEnableChannel={enableChannel} onOpenChannel={setActiveChannelId} />
     if (view === 'review') return <ReviewPage records={data.records} onNavigate={switchView} />
     const stage = stageForView(view)
     if (!stage) return null
@@ -665,25 +631,18 @@ function WorkspacePage({ records, leads, intents, customers, channelCount, onAdd
   </>
 }
 
-function AcquisitionPage({ topicResearch, contentProduction, aiSettings, aiSecrets, enabledChannels, performanceByOpportunity, bathroomPackInstalled, bathroomAppliedChannels, onTopicResearchChange, onContentProductionChange, onToast, onOpenAIService, onOfficialUsage, onAdoptOpportunity, onInstallBathroomPack, onApplyBathroomContent, onEnableChannel, onOpenChannel }: { topicResearch: TopicResearchData; contentProduction: ContentProductionData; aiSettings: AIServiceSettings; aiSecrets: AISecretStatus; enabledChannels: ChannelId[]; performanceByOpportunity: Record<string, OpportunityChannelPerformance[]>; bathroomPackInstalled: boolean; bathroomAppliedChannels: ChannelId[]; onTopicResearchChange: (updater: (current: TopicResearchData) => TopicResearchData) => void; onContentProductionChange: (updater: (current: ContentProductionData) => ContentProductionData) => void; onToast: (message: string) => void; onOpenAIService: () => void; onOfficialUsage: (usage: { pointsCharged: number; balanceAfter: number }) => void; onAdoptOpportunity: (opportunity: GeneratedTopicCandidate, channelId: ChannelId) => string; onInstallBathroomPack: () => void; onApplyBathroomContent: (channelId: ChannelId, referralName?: string) => void; onEnableChannel: (channelId: ChannelId) => void; onOpenChannel: (channelId: ChannelId) => void }) {
+function AcquisitionPage({ topicResearch, contentProduction, industryPack, aiSettings, aiSecrets, enabledChannels, performanceByOpportunity, bathroomRulesEnabled, onTopicResearchChange, onContentProductionChange, onToast, onOpenAIService, onOfficialUsage, onAdoptOpportunity, onEnableBathroomRules, onEnableChannel, onOpenChannel }: { topicResearch: TopicResearchData; contentProduction: ContentProductionData; industryPack?: IndustryRulePack; aiSettings: AIServiceSettings; aiSecrets: AISecretStatus; enabledChannels: ChannelId[]; performanceByOpportunity: Record<string, OpportunityChannelPerformance[]>; bathroomRulesEnabled: boolean; onTopicResearchChange: (updater: (current: TopicResearchData) => TopicResearchData) => void; onContentProductionChange: (updater: (current: ContentProductionData) => ContentProductionData) => void; onToast: (message: string) => void; onOpenAIService: () => void; onOfficialUsage: (usage: { pointsCharged: number; balanceAfter: number }) => void; onAdoptOpportunity: (opportunity: GeneratedTopicCandidate, channelId: ChannelId) => string; onEnableBathroomRules: () => void; onEnableChannel: (channelId: ChannelId) => void; onOpenChannel: (channelId: ChannelId) => void }) {
   const [selectedChannelId, setSelectedChannelId] = useState<ChannelId>('douyin')
   const channel = channelById(selectedChannelId)
   const isEnabled = enabledChannels.includes(selectedChannelId)
   const isAvailable = selectedChannelId === 'douyin' || selectedChannelId === 'xiaohongshu' || selectedChannelId === 'wechat' || selectedChannelId === 'offline' || selectedChannelId === 'referral' || selectedChannelId === 'bilibili'
-  const focusChannelSetup = (channelId: ChannelId) => {
-    setSelectedChannelId(channelId)
-    window.setTimeout(() => {
-      document.getElementById('channel-foundation')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      document.getElementById(`enable-channel-${channelId}`)?.focus({ preventScroll: true })
-    }, 0)
-  }
   return <>
     <PageHeader title="获客" description="选择准备使用的获客渠道。启用后即可进入对应的基础工作区。" />
-    <TopicResearchPanel data={topicResearch} aiSettings={aiSettings} aiSecrets={aiSecrets} enabledChannels={enabledChannels} performanceByOpportunity={performanceByOpportunity} onChange={onTopicResearchChange} onToast={onToast} onOpenAIService={onOpenAIService} onOfficialUsage={onOfficialUsage} onAdoptOpportunity={onAdoptOpportunity} onOpenChannel={onOpenChannel} />
-    <ContentProductionPanel data={contentProduction} opportunities={topicResearch.generatedTopics} evidence={topicResearch.evidence} enabledChannels={enabledChannels} performanceByOpportunity={performanceByOpportunity} aiSettings={aiSettings} aiSecrets={aiSecrets} onChange={onContentProductionChange} onToast={onToast} onOpenAIService={onOpenAIService} onOfficialUsage={onOfficialUsage} onOpenChannel={onOpenChannel} />
+    <TopicResearchPanel data={topicResearch} industryPack={industryPack} aiSettings={aiSettings} aiSecrets={aiSecrets} enabledChannels={enabledChannels} performanceByOpportunity={performanceByOpportunity} onChange={onTopicResearchChange} onToast={onToast} onOpenAIService={onOpenAIService} onOfficialUsage={onOfficialUsage} onAdoptOpportunity={onAdoptOpportunity} onOpenChannel={onOpenChannel} />
+    <ContentProductionPanel data={contentProduction} opportunities={topicResearch.generatedTopics} evidence={topicResearch.evidence} industryPack={industryPack} enabledChannels={enabledChannels} performanceByOpportunity={performanceByOpportunity} aiSettings={aiSettings} aiSecrets={aiSecrets} onChange={onContentProductionChange} onToast={onToast} onOpenAIService={onOpenAIService} onOfficialUsage={onOfficialUsage} onOpenChannel={onOpenChannel} />
     <section className="channel-tabs" aria-label="获客渠道">{channelDefinitions.map((item) => <button key={item.id} data-channel-id={item.id} className={selectedChannelId === item.id ? 'active' : ''} type="button" onClick={() => setSelectedChannelId(item.id)}><span className={`mini-channel-icon ${item.id}`}>{item.icon}</span>{item.shortLabel}{enabledChannels.includes(item.id) && <b><Check size={11} /></b>}</button>)}</section>
     <section className="channel-foundation-band" id="channel-foundation"><div className="channel-foundation-head"><span className={`channel-icon ${channel.id}`}>{channel.icon}</span><div><h2>{channel.label}</h2><p>{channel.description}</p></div><span className={`channel-availability ${isEnabled ? 'enabled' : isAvailable ? 'available' : 'pending'}`}>{isEnabled ? '已启用' : isAvailable ? '可启用' : '基础框架待完善'}</span></div><div className="channel-foundation-body"><div><h3>基础工作流程</h3><p>这套流程属于渠道本身，不需要先选择行业或内容方向。</p><div className="workflow-steps light">{channel.workflow.map((step, index) => <span key={step}><b>{index + 1}</b>{step}</span>)}</div></div><div className="channel-foundation-action"><small>{isAvailable || isEnabled ? `启用后即可使用${channel.shortLabel}的完整基础工作区。` : '该渠道会在基础能力完成并验证后开放。'}</small>{isEnabled ? <button className="button button-primary" onClick={() => onOpenChannel(channel.id)}>进入{channel.shortLabel}<ArrowRight size={16} /></button> : isAvailable ? <button className="button button-primary" id={`enable-channel-${channel.id}`} onClick={() => onEnableChannel(channel.id)}>启用{channel.shortLabel}<Check size={16} /></button> : <button className="button button-secondary" type="button" disabled>暂未开放</button>}</div></div></section>
-    <BathroomContentPackPanel installed={bathroomPackInstalled} enabledChannels={enabledChannels} appliedChannels={bathroomAppliedChannels} onInstall={onInstallBathroomPack} onSelectChannel={focusChannelSetup} onApply={onApplyBathroomContent} />
+    <BathroomIndustryRulePanel installed={bathroomRulesEnabled} onInstall={onEnableBathroomRules} />
   </>
 }
 

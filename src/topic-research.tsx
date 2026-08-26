@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowRight, Check, CircleCheckBig, ExternalLink, Globe2,
 import { generateWithConfiguredService } from './ai-generation'
 import type { AISecretStatus, AIServiceSettings } from './ai-service'
 import { channelById, type ChannelId } from './channels'
+import { buildIndustrySearchQuery, evaluateOpportunityByIndustryRules, industryRulePayload, type IndustryRulePack } from './industry-rules'
 
 export type ResearchSource = 'web' | 'douyin' | 'xiaohongshu' | 'wechat' | 'bilibili'
 export type ResearchFreshness = 'week' | 'month' | 'year' | 'all'
@@ -58,6 +59,7 @@ export type TopicResearchData = {
 
 export type GeneratedTopicCandidate = {
   id: string
+  industryPackId: string
   title: string
   customerQuestion: string
   targetCustomer: string
@@ -131,6 +133,7 @@ export function normalizeTopicResearchData(value: unknown): TopicResearchData {
   const generatedTopics = Array.isArray((value as Partial<TopicResearchData>).generatedTopics)
     ? (value as Partial<TopicResearchData>).generatedTopics!.filter((item): item is GeneratedTopicCandidate => Boolean(item && typeof item.title === 'string')).map((item) => ({
       id: item.id || `generated-topic-${Date.now()}`,
+      industryPackId: typeof item.industryPackId === 'string' ? item.industryPackId.slice(0, 200) : '',
       title: item.title.trim().slice(0, 160),
       customerQuestion: typeof item.customerQuestion === 'string' ? item.customerQuestion.trim().slice(0, 300) : '',
       targetCustomer: typeof item.targetCustomer === 'string' ? item.targetCustomer.trim().slice(0, 300) : '',
@@ -225,7 +228,7 @@ function opportunityReadiness(item: GeneratedTopicCandidate, evidence: ResearchE
   return { label: '证据不足', tone: 'blocked' }
 }
 
-export function TopicResearchPanel({ data, aiSettings, aiSecrets, enabledChannels, performanceByOpportunity, onChange, onToast, onOpenAIService, onOfficialUsage, onAdoptOpportunity, onOpenChannel }: { data: TopicResearchData; aiSettings: AIServiceSettings; aiSecrets: AISecretStatus; enabledChannels: ChannelId[]; performanceByOpportunity: Record<string, OpportunityChannelPerformance[]>; onChange: (updater: (current: TopicResearchData) => TopicResearchData) => void; onToast: (message: string) => void; onOpenAIService: () => void; onOfficialUsage: (usage: { pointsCharged: number; balanceAfter: number }) => void; onAdoptOpportunity: (opportunity: GeneratedTopicCandidate, channelId: ChannelId) => string; onOpenChannel: (channelId: ChannelId) => void }) {
+export function TopicResearchPanel({ data, industryPack, aiSettings, aiSecrets, enabledChannels, performanceByOpportunity, onChange, onToast, onOpenAIService, onOfficialUsage, onAdoptOpportunity, onOpenChannel }: { data: TopicResearchData; industryPack?: IndustryRulePack; aiSettings: AIServiceSettings; aiSecrets: AISecretStatus; enabledChannels: ChannelId[]; performanceByOpportunity: Record<string, OpportunityChannelPerformance[]>; onChange: (updater: (current: TopicResearchData) => TopicResearchData) => void; onToast: (message: string) => void; onOpenAIService: () => void; onOfficialUsage: (usage: { pointsCharged: number; balanceAfter: number }) => void; onAdoptOpportunity: (opportunity: GeneratedTopicCandidate, channelId: ChannelId) => string; onOpenChannel: (channelId: ChannelId) => void }) {
   const [query, setQuery] = useState('')
   const [source, setSource] = useState<ResearchSource>('web')
   const [freshness, setFreshness] = useState<ResearchFreshness>('month')
@@ -265,6 +268,15 @@ export function TopicResearchPanel({ data, aiSettings, aiSecrets, enabledChannel
       return
     }
     setQuery(nextQuery)
+    setError('')
+  }
+
+  const useIndustrySearchDirection = (directionId: string) => {
+    if (!industryPack || !data.brief.offer.trim()) {
+      setError('先填写主推产品或服务，再使用行业搜索方向。')
+      return
+    }
+    setQuery(buildIndustrySearchQuery(industryPack, directionId, data.brief))
     setError('')
   }
 
@@ -375,6 +387,7 @@ export function TopicResearchPanel({ data, aiSettings, aiSecrets, enabledChannel
         task: 'acquisition_opportunities',
         payload: {
           brief: data.brief,
+          industryRules: industryRulePayload(industryPack),
           query: query.trim() || data.evidence[0]?.query || '',
           evidence: data.evidence.slice(0, 8).map((item) => ({ id: item.id, source: item.source, title: item.title, summary: item.summary, publishedDate: item.publishedDate })),
           requirements: {
@@ -408,7 +421,7 @@ export function TopicResearchPanel({ data, aiSettings, aiSecrets, enabledChannel
       const createdAt = new Date().toISOString()
       onChange((current) => ({
         ...current,
-        generatedTopics: generated.map((item, index) => ({ ...item, id: `generated-topic-${Date.now()}-${index}`, service: response.service!, status: '待评估', adoptedChannels: [], adoptions: [], reviewDecision: '', createdAt })),
+        generatedTopics: generated.map((item, index) => ({ ...item, id: `generated-topic-${Date.now()}-${index}`, industryPackId: industryPack?.id || '', service: response.service!, status: '待评估', adoptedChannels: [], adoptions: [], reviewDecision: '', createdAt })),
       }))
       if (response.usage) {
         onToast(`已形成 ${generated.length} 个获客机会，消耗 ${response.usage.pointsCharged} 积分`)
@@ -470,7 +483,9 @@ export function TopicResearchPanel({ data, aiSettings, aiSecrets, enabledChannel
           <label><span>不能承诺或不接的情况</span><textarea rows={3} value={data.brief.constraints} onChange={(event) => updateBrief('constraints', event.target.value)} placeholder="服务边界、价格边界、不能保证的效果" /></label>
         </div>
       </div>
+      {industryPack && <div className="active-industry-rules"><ShieldCheck size={16} /><div><strong>{industryPack.name}正在约束本次研究</strong><p>搜索扩词、需求信号、来源筛选、机会评分和证据要求会使用此规则包；具体标题仍由当前商家资料与真实来源生成。</p></div><span>v{industryPack.version}</span></div>}
       <div className="research-directions"><div><Search size={15} /><strong>搜索方向</strong><span>每次换一个方向搜索，避免只看同一种内容。</span></div><div>{researchDirections.map((item) => <button key={item.label} type="button" title={item.hint} onClick={() => useResearchDirection(item.build)}>{item.label}</button>)}</div></div>
+      {industryPack && <div className="research-directions industry"><div><Target size={15} /><strong>{industryPack.industry}扩词</strong><span>把当前产品、客户和地区带入行业搜索，不使用预制选题。</span></div><div>{industryPack.searchDirections.map((item) => <button key={item.id} type="button" title={`${item.hint} ${item.intent}`} onClick={() => useIndustrySearchDirection(item.id)}>{item.label}</button>)}</div></div>}
       <form className="topic-search-form" onSubmit={(event) => { event.preventDefault(); void runSearch() }}>
         <label className="topic-query-field"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="输入客户问题、产品、场景或竞品关键词" /></label>
         <label><span>来源</span><select value={source} onChange={(event) => setSource(event.target.value as ResearchSource)}>{sourceOptions.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
@@ -485,6 +500,9 @@ export function TopicResearchPanel({ data, aiSettings, aiSecrets, enabledChannel
       {!canGenerate && <div className="research-readiness"><strong>生成门槛</strong><span className={briefReady ? 'done' : ''}><Check size={12} />主推产品、目标客户、下一步动作</span><span className={data.evidence.length >= 2 ? 'done' : ''}><Check size={12} />至少 2 条真实来源</span><small>门槛用于减少“标题很好看，但和生意没有关系”的内容。</small></div>}
       {data.generatedTopics.length > 0 && <div className="generated-topic-section"><div className="generated-topic-heading"><div><Sparkles size={16} /><strong>获客机会</strong><span>{data.generatedTopics.length}</span></div><small>先人工判断，再送入具体渠道执行。</small></div><div className="generated-topic-list opportunity-list">{data.generatedTopics.map((item) => {
         const readiness = opportunityReadiness(item, data.evidence)
+        const appliedIndustryPack = industryPack && item.industryPackId === industryPack.id ? industryPack : undefined
+        const industryEvaluation = appliedIndustryPack ? evaluateOpportunityByIndustryRules(item, data.brief, data.evidence, appliedIndustryPack) : null
+        const industryFindings = industryEvaluation?.checks.filter((check) => check.score < 70).slice(0, 3) || []
         const matchedEvidence = item.evidenceIds.filter((id) => data.evidence.some((source) => source.id === id)).length
         const executableChannels = item.recommendedChannels.filter((id) => id !== 'referral')
         const recommended = executableChannels.length ? executableChannels : enabledChannels.filter((id) => ['douyin', 'xiaohongshu', 'wechat', 'bilibili'].includes(id)).slice(0, 2)
@@ -495,7 +513,7 @@ export function TopicResearchPanel({ data, aiSettings, aiSecrets, enabledChannel
         const resultLabel = totals.customers ? '已带来成交' : totals.qualifiedLeads ? '已产生有效线索' : totals.registeredLeads || totals.platformInquiries ? '已产生咨询' : performance.some((result) => result.executed) ? '数据观察中' : performance.length ? '等待执行' : '尚未进入渠道'
         const linkedChannels = new Set(item.adoptions.map((adoption) => adoption.channelId))
         const canReview = performance.some((result) => result.executed) || totals.registeredLeads > 0 || totals.platformInquiries > 0
-        return <article key={item.id} className={`opportunity-card ${item.status === '暂不采用' ? 'rejected' : ''}`}><div className="opportunity-main"><div className="opportunity-meta"><span>{item.service === 'official' ? '官方积分分析' : '自有 API 分析'} · {formatDiscoveredAt(item.createdAt)}</span><b className={readiness.tone}>{readiness.label}</b><b>{matchedEvidence} 条证据</b>{item.buyerStage && <b>{item.buyerStage}</b>}</div><h3>{item.title}</h3><div className="opportunity-summary">{item.targetCustomer && <p><UsersRound size={14} /><span><strong>适合谁</strong>{item.targetCustomer}</span></p>}{item.customerQuestion && <p><Lightbulb size={14} /><span><strong>客户问题</strong>{item.customerQuestion}</span></p>}{item.demandSignal && <p><Search size={14} /><span><strong>需求信号</strong>{item.demandSignal}</span></p>}{item.keyPromise && <p><Target size={14} /><span><strong>内容给出的价值</strong>{item.keyPromise}</span></p>}</div><div className="opportunity-execution"><div><strong>怎么讲</strong><p>{item.contentAngle || '需要补充内容角度'}</p></div><div><strong>拿什么证明</strong><p>{item.proofNeeded || '需要补充真实证明素材'}</p></div><div><strong>怎么承接</strong><p>{conversionCopy}</p></div></div>{item.fitReason && <p className="opportunity-reason"><CircleCheckBig size={14} />{item.fitReason}</p>}{item.riskNote && <p className="opportunity-risk"><AlertTriangle size={14} />{item.riskNote}</p>}{performance.length > 0 && <div className="opportunity-performance"><div className="opportunity-performance-head"><div><strong>结果回传</strong><span className={totals.customers || totals.qualifiedLeads ? 'positive' : ''}>{resultLabel}</span></div><div><span><b>{totals.reach}</b>曝光 / 到场</span><span><b>{totals.platformInquiries}</b>平台咨询</span><span><b>{totals.registeredLeads}</b>登记线索</span><span><b>{totals.qualifiedLeads}</b>有效线索</span><span><b>{totals.customers}</b>成交</span></div></div><div className="opportunity-performance-list">{performance.map((result) => <button key={`${result.channelId}-${result.itemId}`} type="button" onClick={() => onOpenChannel(result.channelId)}><span className={`mini-channel-icon ${result.channelId}`}>{channelById(result.channelId).icon}</span><strong>{channelById(result.channelId).shortLabel}</strong><span>{result.stage}</span><small>{result.platformInquiries} 咨询 · {result.registeredLeads} 线索 · {result.customers} 成交</small><ArrowRight size={13} /></button>)}</div>{canReview && <div className="opportunity-review"><span>本轮结论</span>{(['继续投入', '调整后再试', '停止投入'] as OpportunityDecision[]).map((decision) => <button key={decision} className={item.reviewDecision === decision ? 'active' : ''} type="button" onClick={() => setReviewDecision(item.id, item.reviewDecision === decision ? '' : decision)}>{item.reviewDecision === decision && <Check size={12} />}{decision}</button>)}<small>结论会连同真实结果进入下一次机会分析。</small></div>}</div>}<div className="opportunity-sources"><strong>依据</strong>{item.evidenceIds.map((id) => { const evidence = data.evidence.find((source) => source.id === id); return evidence ? <button key={id} type="button" onClick={() => window.open(evidence.url, '_blank', 'noopener,noreferrer')}>{evidence.title}<ExternalLink size={11} /></button> : null })}</div><div className="opportunity-actions"><span>送入渠道</span>{recommended.map((channelId) => <button key={channelId} className="button button-secondary small" type="button" disabled={linkedChannels.has(channelId)} onClick={() => adoptToChannel(item, channelId)}>{linkedChannels.has(channelId) ? <Check size={13} /> : <ArrowRight size={13} />}{linkedChannels.has(channelId) ? `已关联${channelById(channelId).shortLabel}` : channelById(channelId).shortLabel}</button>)}<button className="text-button" type="button" onClick={() => setOpportunityStatus(item.id, item.status === '暂不采用' ? '待评估' : '暂不采用')}>{item.status === '暂不采用' ? '恢复评估' : '暂不采用'}</button></div></div><button className="icon-button small" type="button" title={item.adoptions.length ? '已关联渠道的机会不能删除，可以标记为停止投入' : '移除机会'} aria-label={item.adoptions.length ? '已关联渠道，不能删除' : '移除机会'} disabled={item.adoptions.length > 0} onClick={() => removeGeneratedTopic(item.id)}><Trash2 size={14} /></button></article>
+        return <article key={item.id} className={`opportunity-card ${item.status === '暂不采用' ? 'rejected' : ''}`}><div className="opportunity-main"><div className="opportunity-meta"><span>{item.service === 'official' ? '官方积分分析' : '自有 API 分析'} · {formatDiscoveredAt(item.createdAt)}</span><b className={industryEvaluation?.tone || readiness.tone}>{industryEvaluation ? `${industryEvaluation.label} ${industryEvaluation.score}` : readiness.label}</b><b>{matchedEvidence} 条证据</b>{item.buyerStage && <b>{item.buyerStage}</b>}</div><h3>{item.title}</h3><div className="opportunity-summary">{item.targetCustomer && <p><UsersRound size={14} /><span><strong>适合谁</strong>{item.targetCustomer}</span></p>}{item.customerQuestion && <p><Lightbulb size={14} /><span><strong>客户问题</strong>{item.customerQuestion}</span></p>}{item.demandSignal && <p><Search size={14} /><span><strong>需求信号</strong>{item.demandSignal}</span></p>}{item.keyPromise && <p><Target size={14} /><span><strong>内容给出的价值</strong>{item.keyPromise}</span></p>}</div><div className="opportunity-execution"><div><strong>怎么讲</strong><p>{item.contentAngle || '需要补充内容角度'}</p></div><div><strong>拿什么证明</strong><p>{item.proofNeeded || '需要补充真实证明素材'}</p></div><div><strong>怎么承接</strong><p>{conversionCopy}</p></div></div>{item.fitReason && <p className="opportunity-reason"><CircleCheckBig size={14} />{item.fitReason}</p>}{item.riskNote && <p className="opportunity-risk"><AlertTriangle size={14} />{item.riskNote}</p>}{industryEvaluation && <div className="industry-opportunity-review"><div><ShieldCheck size={14} /><strong>{appliedIndustryPack?.name}本地检查</strong><small>只评估行业匹配、证据与执行准备度，不预测流量、咨询或成交。</small></div>{industryFindings.length ? industryFindings.map((finding) => <p key={finding.id}><b>{finding.label}</b><span>{finding.reason}</span></p>) : <p className="ready"><b>规则检查完整</b><span>当前行业硬条件较完整，仍需人工核对来源和真实素材。</span></p>}</div>}{performance.length > 0 && <div className="opportunity-performance"><div className="opportunity-performance-head"><div><strong>结果回传</strong><span className={totals.customers || totals.qualifiedLeads ? 'positive' : ''}>{resultLabel}</span></div><div><span><b>{totals.reach}</b>曝光 / 到场</span><span><b>{totals.platformInquiries}</b>平台咨询</span><span><b>{totals.registeredLeads}</b>登记线索</span><span><b>{totals.qualifiedLeads}</b>有效线索</span><span><b>{totals.customers}</b>成交</span></div></div><div className="opportunity-performance-list">{performance.map((result) => <button key={`${result.channelId}-${result.itemId}`} type="button" onClick={() => onOpenChannel(result.channelId)}><span className={`mini-channel-icon ${result.channelId}`}>{channelById(result.channelId).icon}</span><strong>{channelById(result.channelId).shortLabel}</strong><span>{result.stage}</span><small>{result.platformInquiries} 咨询 · {result.registeredLeads} 线索 · {result.customers} 成交</small><ArrowRight size={13} /></button>)}</div>{canReview && <div className="opportunity-review"><span>本轮结论</span>{(['继续投入', '调整后再试', '停止投入'] as OpportunityDecision[]).map((decision) => <button key={decision} className={item.reviewDecision === decision ? 'active' : ''} type="button" onClick={() => setReviewDecision(item.id, item.reviewDecision === decision ? '' : decision)}>{item.reviewDecision === decision && <Check size={12} />}{decision}</button>)}<small>结论会连同真实结果进入下一次机会分析。</small></div>}</div>}<div className="opportunity-sources"><strong>依据</strong>{item.evidenceIds.map((id) => { const evidence = data.evidence.find((source) => source.id === id); return evidence ? <button key={id} type="button" onClick={() => window.open(evidence.url, '_blank', 'noopener,noreferrer')}>{evidence.title}<ExternalLink size={11} /></button> : null })}</div><div className="opportunity-actions"><span>送入渠道</span>{recommended.map((channelId) => <button key={channelId} className="button button-secondary small" type="button" disabled={linkedChannels.has(channelId)} onClick={() => adoptToChannel(item, channelId)}>{linkedChannels.has(channelId) ? <Check size={13} /> : <ArrowRight size={13} />}{linkedChannels.has(channelId) ? `已关联${channelById(channelId).shortLabel}` : channelById(channelId).shortLabel}</button>)}<button className="text-button" type="button" onClick={() => setOpportunityStatus(item.id, item.status === '暂不采用' ? '待评估' : '暂不采用')}>{item.status === '暂不采用' ? '恢复评估' : '暂不采用'}</button></div></div><button className="icon-button small" type="button" title={item.adoptions.length ? '已关联渠道的机会不能删除，可以标记为停止投入' : '移除机会'} aria-label={item.adoptions.length ? '已关联渠道，不能删除' : '移除机会'} disabled={item.adoptions.length > 0} onClick={() => removeGeneratedTopic(item.id)}><Trash2 size={14} /></button></article>
       })}</div></div>}
       {!((aiSettings.mode === 'official' && aiSecrets.officialTokenSaved) || (aiSettings.mode === 'custom' && aiSecrets.customApiKeySaved)) && data.evidence.length > 0 && <div className="topic-ai-setup"><ShieldCheck size={15} /><span>生成前需要选择官方积分服务或接入自己的 API。</span><button className="text-button" type="button" onClick={onOpenAIService}>配置 AI 服务</button></div>}
     </section>

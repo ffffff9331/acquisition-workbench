@@ -61,7 +61,7 @@ async function main() {
     assert.equal(order.ok, true)
     assert.equal(order.order.orderId, 'order-1')
 
-    const generation = await client.generate({ workspaceId: 'demo-workspace', task: 'acquisition_opportunities', payload: { query: '小户型卫生间' } })
+    const generation = await client.generate({ workspaceId: 'demo-workspace', task: 'acquisition_opportunities', payload: { query: '小户型卫生间', industryRules: { id: 'bathroom-industry-rules-v2', productionRules: ['标题必须对应当前证据'] } } })
     assert.equal(generation.ok, true)
     assert.equal(generation.data.usage.pointsCharged, 12)
     assert.equal(generation.data.usage.balanceAfter, 1268)
@@ -72,6 +72,8 @@ async function main() {
     assert.ok(observed[2].body.clientRequestId)
     assert.equal(observed[3].body.workspaceId, 'demo-workspace')
     assert.equal(observed[3].body.task, 'acquisition_opportunities')
+    assert.equal(observed[3].body.payload.industryRules.id, 'bathroom-industry-rules-v2')
+    assert.deepEqual(observed[3].body.payload.industryRules.productionRules, ['标题必须对应当前证据'])
     assert.ok(observed[3].body.requestId)
     process.stdout.write('Official service contract verified.\n')
   } finally {
