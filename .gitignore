@@ -1,0 +1,20 @@
+.DS_Store
+node_modules/
+dist/
+release/
+*.log
+.env
+.env.*
+!.env.example
+.vite/
+coverage/
+.impeccable/
+
+# Local IDE and OS state
+.idea/
+.vscode/
+Thumbs.db
+
+# Local credentials and runtime overrides
+electron/official-service.local.json
+electron/custom-service.local.json
