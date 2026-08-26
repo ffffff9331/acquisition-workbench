@@ -1,7 +1,7 @@
 {
   "name": "acquisition-workbench",
   "private": true,
-  "version": "0.21.0",
+  "version": "0.22.0",
   "description": "A desktop workspace for repeatable customer acquisition projects.",
   "author": "Acquisition Workbench",
   "type": "module",
@@ -15,6 +15,7 @@
     "test:official-service": "node scripts/verify-official-service.cjs",
     "test:custom-service": "node scripts/verify-custom-service.cjs",
     "test:ai-service": "npm run test:official-service && npm run test:custom-service",
+    "test:industry-packs": "node scripts/verify-industry-packs.cjs",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win nsis --x64"
   },
