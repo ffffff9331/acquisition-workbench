@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  ClipboardPlus,
   Coins,
   FolderPlus,
   Link2,
@@ -33,6 +34,7 @@ import { IndustryRuleCatalog } from './industry-rule-catalog'
 import { industryRulePackById, industryRulePacks, normalizeIndustryPackId } from './industry-pack-registry'
 import { TacticPackCatalog } from './tactic-pack-catalog'
 import { growthTacticPackById, growthTacticPacks, normalizeTacticLeadValues, normalizeTacticQualificationStatus, tacticLeadInputName, tacticLeadProgress, tacticQualificationRecommendation, type GrowthTacticPack, type TacticLeadValues, type TacticQualificationStatus } from './tactic-packs'
+import { customerStageEventByType, customerStageEventDefinitions, normalizeCustomerStageEvents, type CustomerStageEvent } from './customer-events'
 import { tacticReviewRows } from './tactic-review'
 import { emptyTopicResearchData, normalizeTopicResearchData, TopicResearchPanel, type GeneratedTopicCandidate, type OpportunityChannelPerformance, type TopicResearchData } from './topic-research'
 import { ContentProductionPanel, emptyContentProductionData, normalizeContentProductionData, type ContentProductionData } from './content-production'
@@ -89,10 +91,10 @@ type ChannelTask = {
 
 type SourceOption = { id: string; label: string }
 
-type WorkspaceData = { records: CustomerRecord[]; enabledChannels: ChannelId[]; installedIndustryPacks: string[]; activeIndustryPackId: string; installedTacticPacks: string[]; activeTacticPackId: string; channelTasks: ChannelTask[]; topicResearch: TopicResearchData; contentProduction: ContentProductionData; douyin: DouyinData; xiaohongshu: XiaohongshuData; wechat: WechatData; offline: OfflineData; referral: ReferralData; bilibili: BilibiliData }
+type WorkspaceData = { records: CustomerRecord[]; events: CustomerStageEvent[]; enabledChannels: ChannelId[]; installedIndustryPacks: string[]; activeIndustryPackId: string; installedTacticPacks: string[]; activeTacticPackId: string; channelTasks: ChannelTask[]; topicResearch: TopicResearchData; contentProduction: ContentProductionData; douyin: DouyinData; xiaohongshu: XiaohongshuData; wechat: WechatData; offline: OfflineData; referral: ReferralData; bilibili: BilibiliData }
 
 const STORAGE_KEY = 'acquisition-workbench-core-v1'
-const emptyData: WorkspaceData = { records: [], enabledChannels: [], installedIndustryPacks: [], activeIndustryPackId: '', installedTacticPacks: [], activeTacticPackId: '', channelTasks: [], topicResearch: emptyTopicResearchData, contentProduction: emptyContentProductionData, douyin: emptyDouyinData, xiaohongshu: emptyXiaohongshuData, wechat: emptyWechatData, offline: emptyOfflineData, referral: emptyReferralData, bilibili: emptyBilibiliData }
+const emptyData: WorkspaceData = { records: [], events: [], enabledChannels: [], installedIndustryPacks: [], activeIndustryPackId: '', installedTacticPacks: [], activeTacticPackId: '', channelTasks: [], topicResearch: emptyTopicResearchData, contentProduction: emptyContentProductionData, douyin: emptyDouyinData, xiaohongshu: emptyXiaohongshuData, wechat: emptyWechatData, offline: emptyOfflineData, referral: emptyReferralData, bilibili: emptyBilibiliData }
 
 const navItems: Array<{ id: View; label: string; icon: ReactNode }> = [
   { id: 'workspace', label: '工作台', icon: <Target size={18} /> },
@@ -147,6 +149,17 @@ function qualificationTone(status: string) {
   return 'amber'
 }
 
+function createCustomerStageEvent(recordId: string, type: CustomerStageEvent['type'], occurredAt = todayISO(), note = ''): CustomerStageEvent {
+  return {
+    id: `event-${Date.now()}-${Math.floor(Math.random() * 900 + 100)}`,
+    recordId,
+    type,
+    occurredAt,
+    note,
+    createdAt: new Date().toISOString().slice(0, 19),
+  }
+}
+
 function loadData(): WorkspaceData {
   try {
     const saved = window.localStorage.getItem(STORAGE_KEY)
@@ -189,6 +202,7 @@ function loadData(): WorkspaceData {
     const bilibili = normalizeBilibiliData(parsed.bilibili, channelTasks)
     const topicResearch = normalizeTopicResearchData(parsed.topicResearch)
     const contentProduction = normalizeContentProductionData(parsed.contentProduction)
+    const events = normalizeCustomerStageEvents(parsed.events)
     return {
       records: parsed.records.filter((record) => record && typeof record.name === 'string').map((record) => ({
         ...record,
@@ -206,6 +220,7 @@ function loadData(): WorkspaceData {
         tacticQualifiedAt: typeof record.tacticQualifiedAt === 'string' ? record.tacticQualifiedAt.slice(0, 20) : '',
         createdAt: record.createdAt || todayISO(),
       })),
+      events,
       enabledChannels: normalizeEnabledChannels(parsed.enabledChannels, channelTasks, douyin, xiaohongshu, wechat, offline, referral, bilibili),
       installedIndustryPacks,
       activeIndustryPackId,
@@ -296,6 +311,7 @@ function App() {
   const [recordTacticPackId, setRecordTacticPackId] = useState('')
   const [editingRecord, setEditingRecord] = useState<CustomerRecord | null>(null)
   const [intentConfirmationRecord, setIntentConfirmationRecord] = useState<CustomerRecord | null>(null)
+  const [eventRecord, setEventRecord] = useState<CustomerRecord | null>(null)
   const [aiServiceOpen, setAIServiceOpen] = useState(false)
   const [creditAccountOpen, setCreditAccountOpen] = useState(false)
   const [creditAccount, setCreditAccount] = useState<CreditAccountSnapshot | null>(null)
@@ -527,6 +543,7 @@ function App() {
   const moveRecord = (id: string, nextStage: Exclude<Stage, 'lost'>) => {
     setData((current) => ({
       ...current,
+      events: nextStage === 'customer' ? [...current.events, createCustomerStageEvent(id, '已成交')] : current.events,
       records: current.records.map((record) => record.id === id ? {
         ...record,
         stage: nextStage,
@@ -560,6 +577,7 @@ function App() {
   const markLost = (id: string) => {
     setData((current) => ({
       ...current,
+      events: [...current.events, createCustomerStageEvent(id, '暂不推进')],
       records: current.records.map((record) => record.id === id ? { ...record, stage: 'lost', status: '已放弃', nextAction: '' } : record),
     }))
     showToast('已标记为暂不跟进')
@@ -578,6 +596,30 @@ function App() {
       } : item),
     }))
     showToast('已记录，已安排下一次回访')
+  }
+
+  const addCustomerStageEvent = (formData: FormData) => {
+    if (!eventRecord) return
+    const definition = customerStageEventByType(formData.get('type'))
+    if (!definition) return
+    const qualification = tacticQualificationForRecord(eventRecord)
+    if (eventRecord.stage === 'lead' && definition.nextStage && definition.nextStage !== 'lost' && qualification && (qualification.recommendation.status !== '可人工推进' || eventRecord.tacticQualificationStatus !== '可人工推进')) {
+      showToast('请先补全信息并完成人工判断，再记录会推进客户阶段的事项')
+      return
+    }
+    const event = createCustomerStageEvent(eventRecord.id, definition.type, formText(formData, 'occurredAt', 20) || todayISO(), formText(formData, 'note', 3000))
+    setData((current) => ({
+      ...current,
+      events: [event, ...current.events],
+      records: current.records.map((record) => record.id === eventRecord.id ? {
+        ...record,
+        stage: definition.nextStage ? definition.nextStage as Stage : record.stage,
+        status: definition.nextStatus ? definition.nextStatus as RecordStatus : record.status,
+        nextAction: definition.nextAction === undefined ? record.nextAction : definition.nextAction,
+      } : record),
+    }))
+    setEventRecord(null)
+    showToast(`${definition.type}已记录`)
   }
 
   const enableChannel = (channelId: ChannelId) => {
@@ -729,10 +771,10 @@ function App() {
       return <ChannelWorkspacePage channel={channel} tasks={data.channelTasks.filter((task) => task.channelId === channel.id)} records={data.records} onBack={() => setActiveChannelId(null)} onAddTask={() => setTaskChannelId(channel.id)} onEditTask={setEditingTask} onAdvanceTask={advanceChannelTask} onAddLead={() => openRecordDialog('lead', '', channel.id)} />
     }
     if (view === 'acquisition') return <AcquisitionPage topicResearch={data.topicResearch} contentProduction={data.contentProduction} industryPack={activeIndustryPack} activeIndustryPackId={data.activeIndustryPackId} tacticPack={activeTacticPack} activeTacticPackId={data.activeTacticPackId} aiSettings={aiSettings} aiSecrets={aiSecrets} enabledChannels={data.enabledChannels} performanceByOpportunity={opportunityPerformance} onTopicResearchChange={(updater) => setData((current) => ({ ...current, topicResearch: updater(current.topicResearch) }))} onContentProductionChange={(updater) => setData((current) => ({ ...current, contentProduction: updater(current.contentProduction) }))} onToast={showToast} onOpenAIService={() => setAIServiceOpen(true)} onOfficialUsage={(usage) => setCreditAccount((current) => current ? { ...current, balance: usage.balanceAfter, updatedAt: '' } : current)} onAdoptOpportunity={adoptResearchOpportunity} onActivateIndustryRules={activateIndustryRules} onActivateTacticPack={activateTacticPack} onEnableChannel={enableChannel} onOpenChannel={setActiveChannelId} />
-    if (view === 'review') return <ReviewPage records={data.records} onNavigate={switchView} />
+    if (view === 'review') return <ReviewPage records={data.records} events={data.events} onNavigate={switchView} />
     const stage = stageForView(view)
     if (!stage) return null
-    return <LifecyclePage stage={stage} records={visibleRecords} sourceOptions={activeSources} search={search} onSearch={setSearch} onAdd={() => openRecordDialog(stage)} onEdit={setEditingRecord} onMove={moveRecord} onRequestTacticIntent={setIntentConfirmationRecord} onMarkLost={markLost} onCompleteAction={setNextActionDone} />
+    return <LifecyclePage stage={stage} records={visibleRecords} sourceOptions={activeSources} search={search} onSearch={setSearch} onAdd={() => openRecordDialog(stage)} onEdit={setEditingRecord} onMove={moveRecord} onRequestTacticIntent={setIntentConfirmationRecord} onAddEvent={setEventRecord} onMarkLost={markLost} onCompleteAction={setNextActionDone} />
   })()
 
   return <div className="app-shell">
@@ -746,8 +788,9 @@ function App() {
       <div className="page-wrap" key={view}>{page}</div>
     </main>
     {dialogStage && <RecordDialog stage={dialogStage} sourceOptions={activeSources} defaultSource={recordSourcePreset} tacticPack={growthTacticPackById(recordTacticPackId)} onClose={() => { setDialogStage(null); setRecordSourcePreset(''); setRecordTacticPackId('') }} onSubmit={(formData) => addRecord(formData, dialogStage)} />}
-    {editingRecord && <RecordDialog record={editingRecord} sourceOptions={activeSources} stage={editingRecord.stage === 'lost' ? 'lead' : editingRecord.stage} tacticPack={growthTacticPackById(editingRecord.tacticPackId)} onClose={() => setEditingRecord(null)} onSubmit={updateRecord} />}
+    {editingRecord && <RecordDialog record={editingRecord} stageEvents={data.events.filter((event) => event.recordId === editingRecord.id)} sourceOptions={activeSources} stage={editingRecord.stage === 'lost' ? 'lead' : editingRecord.stage} tacticPack={growthTacticPackById(editingRecord.tacticPackId)} onClose={() => setEditingRecord(null)} onSubmit={updateRecord} />}
     {intentConfirmationRecord && <TacticIntentConfirmationDialog record={intentConfirmationRecord} onClose={() => setIntentConfirmationRecord(null)} onEdit={() => { setIntentConfirmationRecord(null); setEditingRecord(intentConfirmationRecord) }} onConfirm={() => confirmTacticIntent(intentConfirmationRecord)} />}
+    {eventRecord && <CustomerStageEventDialog record={eventRecord} onClose={() => setEventRecord(null)} onSubmit={addCustomerStageEvent} />}
     {taskChannelId && <ChannelTaskDialog channel={channelById(taskChannelId)} onClose={() => setTaskChannelId(null)} onSubmit={(formData) => addChannelTask(formData, taskChannelId)} />}
     {editingTask && <ChannelTaskDialog channel={channelById(editingTask.channelId)} task={editingTask} onClose={() => setEditingTask(null)} onSubmit={updateChannelTask} />}
     {aiServiceOpen && <AIServiceDialog settings={aiSettings} secretStatus={aiSecrets} onClose={() => setAIServiceOpen(false)} onSave={(nextSettings, nextSecrets) => { setAISettings(nextSettings); setAISecrets(nextSecrets); setAIServiceOpen(false); showToast(nextSettings.mode === 'official' ? '官方 AI 服务已保存' : '自有 AI 服务已保存') }} onToast={showToast} />}
@@ -798,7 +841,7 @@ function ChannelWorkspacePage({ channel, tasks, records, onBack, onAddTask, onEd
   </>
 }
 
-function LifecyclePage({ stage, records, sourceOptions, search, onSearch, onAdd, onEdit, onMove, onRequestTacticIntent, onMarkLost, onCompleteAction }: { stage: Exclude<Stage, 'lost'>; records: CustomerRecord[]; sourceOptions: SourceOption[]; search: string; onSearch: (value: string) => void; onAdd: () => void; onEdit: (record: CustomerRecord) => void; onMove: (id: string, stage: Exclude<Stage, 'lost'>) => void; onRequestTacticIntent: (record: CustomerRecord) => void; onMarkLost: (id: string) => void; onCompleteAction: (record: CustomerRecord) => void }) {
+function LifecyclePage({ stage, records, sourceOptions, search, onSearch, onAdd, onEdit, onMove, onRequestTacticIntent, onAddEvent, onMarkLost, onCompleteAction }: { stage: Exclude<Stage, 'lost'>; records: CustomerRecord[]; sourceOptions: SourceOption[]; search: string; onSearch: (value: string) => void; onAdd: () => void; onEdit: (record: CustomerRecord) => void; onMove: (id: string, stage: Exclude<Stage, 'lost'>) => void; onRequestTacticIntent: (record: CustomerRecord) => void; onAddEvent: (record: CustomerRecord) => void; onMarkLost: (id: string) => void; onCompleteAction: (record: CustomerRecord) => void }) {
   const copy = { lead: { title: '线索', description: '记录新进来的咨询，先确认来源、需求和是否值得继续投入。', action: '新建线索', empty: '还没有线索', helper: '新的私信、扫码、电话、到店和转介绍都可以从这里开始。' }, intent: { title: '意向客户', description: '把确认值得推进的人放在这里，安排联系、预约、方案和报价。', action: '新建意向客户', empty: '还没有意向客户', helper: '线索确认有明确需求后，可以转入这里持续推进。' }, customer: { title: '客户', description: '成交后继续记录服务、回访和下一次可能的复购或转介绍。', action: '新建客户', empty: '还没有客户', helper: '意向客户成交后，会自动进入这里。' } }[stage]
   const statusCounts = stageMeta[stage].statuses.map((status) => ({ status, count: records.filter((record) => record.status === status).length })).filter((item) => item.count > 0)
   return <>
@@ -807,19 +850,25 @@ function LifecyclePage({ stage, records, sourceOptions, search, onSearch, onAdd,
     <section className="table-panel"><div className="table-toolbar"><div><h2>全部{copy.title}</h2><span>{records.length ? '按下一步日期排序' : '等待第一条记录'}</span></div><label className="search-box"><Search size={16} /><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="搜索姓名、联系方式、来源或需求" /></label></div>{records.length ? <div className="table-scroll"><table><thead><tr><th>客户</th><th>来源与需求</th><th>当前状态</th><th>下一步</th><th>负责人</th><th aria-label="操作"></th></tr></thead><tbody>{records.map((record) => {
       const qualification = tacticQualificationForRecord(record)
       const canConfirmIntent = qualification?.recommendation.status === '可人工推进' && record.tacticQualificationStatus === '可人工推进'
-      return <tr key={record.id}><td><button className="record-name" onClick={() => onEdit(record)}><strong>{record.name}</strong><span>{record.contact || `录入于 ${formatDate(record.createdAt)}`}</span></button></td><td><div className="source-cell"><b>{record.source}</b><span>{record.need || '暂未填写需求'}</span></div></td><td><div className="record-status-cell"><span className={`status-pill ${statusTone(record.status)}`}>{record.status}</span>{qualification && <button className={`qualification-pill ${qualificationTone(qualification.status)}`} type="button" onClick={() => onEdit(record)} title={`${qualification.pack.name}：${qualification.status}`}>{qualification.status}</button>}</div></td><td><button className="next-cell" onClick={() => onEdit(record)}><b>{record.nextAction || '待安排'}</b><span>{formatDate(record.nextDate)}</span></button></td><td>{record.owner || '未分配'}</td><td><div className="row-actions">{stage === 'lead' && (qualification ? canConfirmIntent ? <button className="button button-secondary small" onClick={() => onRequestTacticIntent(record)}>确认转为意向<ArrowRight size={14} /></button> : <button className="button button-secondary small" onClick={() => onEdit(record)}>{qualification.status === '待补充信息' ? '补充信息' : '查看判断'}<ChevronRight size={14} /></button> : <button className="button button-secondary small" onClick={() => onMove(record.id, 'intent')}>转为意向<ArrowRight size={14} /></button>)}{stage === 'intent' && <><button className="button button-primary small" onClick={() => onMove(record.id, 'customer')}>标记成交<Check size={14} /></button><button className="icon-button small" title="暂不跟进" aria-label="暂不跟进" onClick={() => onMarkLost(record.id)}><X size={15} /></button></>}{stage === 'customer' && <button className="button button-secondary small" onClick={() => onCompleteAction(record)}>记录回访<Check size={14} /></button>}<button className="icon-button small" title="编辑" aria-label="编辑" onClick={() => onEdit(record)}><ChevronRight size={16} /></button></div></td></tr>
+      return <tr key={record.id}><td><button className="record-name" onClick={() => onEdit(record)}><strong>{record.name}</strong><span>{record.contact || `录入于 ${formatDate(record.createdAt)}`}</span></button></td><td><div className="source-cell"><b>{record.source}</b><span>{record.need || '暂未填写需求'}</span></div></td><td><div className="record-status-cell"><span className={`status-pill ${statusTone(record.status)}`}>{record.status}</span>{qualification && <button className={`qualification-pill ${qualificationTone(qualification.status)}`} type="button" onClick={() => onEdit(record)} title={`${qualification.pack.name}：${qualification.status}`}>{qualification.status}</button>}</div></td><td><button className="next-cell" onClick={() => onEdit(record)}><b>{record.nextAction || '待安排'}</b><span>{formatDate(record.nextDate)}</span></button></td><td>{record.owner || '未分配'}</td><td><div className="row-actions">{stage === 'lead' && (qualification ? canConfirmIntent ? <button className="button button-secondary small" onClick={() => onRequestTacticIntent(record)}>确认转为意向<ArrowRight size={14} /></button> : <button className="button button-secondary small" onClick={() => onEdit(record)}>{qualification.status === '待补充信息' ? '补充信息' : '查看判断'}<ChevronRight size={14} /></button> : <button className="button button-secondary small" onClick={() => onMove(record.id, 'intent')}>转为意向<ArrowRight size={14} /></button>)}{stage === 'intent' && <><button className="button button-primary small" onClick={() => onMove(record.id, 'customer')}>标记成交<Check size={14} /></button><button className="icon-button small" title="暂不跟进" aria-label="暂不跟进" onClick={() => onMarkLost(record.id)}><X size={15} /></button></>}{stage === 'customer' && <button className="button button-secondary small" onClick={() => onCompleteAction(record)}>记录回访<Check size={14} /></button>}<button className="icon-button small" title="记录推进事项" aria-label="记录推进事项" onClick={() => onAddEvent(record)}><ClipboardPlus size={15} /></button><button className="icon-button small" title="编辑" aria-label="编辑" onClick={() => onEdit(record)}><ChevronRight size={16} /></button></div></td></tr>
     })}</tbody></table></div> : <EmptyState icon={<FolderPlus size={25} />} title={copy.empty} description={copy.helper} action={<button className="button button-primary" onClick={onAdd}><Plus size={16} />{copy.action}</button>} />}</section>
   </>
 }
 
-function ReviewPage({ records, onNavigate }: { records: CustomerRecord[]; onNavigate: (view: View) => void }) {
+function ReviewPage({ records, events, onNavigate }: { records: CustomerRecord[]; events: CustomerStageEvent[]; onNavigate: (view: View) => void }) {
   const leads = records.filter((record) => record.stage === 'lead').length
   const intents = records.filter((record) => record.stage === 'intent').length
   const customers = records.filter((record) => record.stage === 'customer').length
   const lost = records.filter((record) => record.stage === 'lost').length
-  const reviewRows = useMemo(() => tacticReviewRows(records), [records])
+  const reviewRows = useMemo(() => tacticReviewRows(records, events), [records, events])
   const sourceRows = useMemo(() => {
     const map = new Map<string, { source: string; total: number; informationComplete: number; manuallyReady: number; customers: number }>()
+    const eventTypesByRecord = new Map<string, Set<CustomerStageEvent['type']>>()
+    events.forEach((event) => {
+      const types = eventTypesByRecord.get(event.recordId) || new Set<CustomerStageEvent['type']>()
+      types.add(event.type)
+      eventTypesByRecord.set(event.recordId, types)
+    })
     records.forEach((record) => {
       const source = record.source || '未记录来源'
       const current = map.get(source) ?? { source, total: 0, informationComplete: 0, manuallyReady: 0, customers: 0 }
@@ -827,17 +876,17 @@ function ReviewPage({ records, onNavigate }: { records: CustomerRecord[]; onNavi
       const tactic = growthTacticPackById(record.tacticPackId)
       if (tactic && tacticLeadProgress(tactic, record.tacticLeadValues).complete) current.informationComplete += 1
       if (tactic && tacticLeadProgress(tactic, record.tacticLeadValues).complete && record.tacticQualificationStatus === '可人工推进') current.manuallyReady += 1
-      if (record.stage === 'customer') current.customers += 1
+      if (record.stage === 'customer' || eventTypesByRecord.get(record.id)?.has('已成交')) current.customers += 1
       map.set(source, current)
     })
     return [...map.values()].sort((left, right) => right.customers - left.customers || right.manuallyReady - left.manuallyReady || right.total - left.total)
-  }, [records])
+  }, [records, events])
   const conversion = leads + intents + customers ? Math.round((customers / Math.max(leads + intents + customers, 1)) * 100) : 0
   return <>
     <PageHeader title="复盘" description="从获客来源一路看到线索、意向和客户，决定下一步把时间花在哪里。" />
     <section className="funnel-panel"><div className="funnel-heading"><div><h2>客户进程</h2><p>这是一张起点清晰的全链路底图，后续获客能力会自动把数据带进来。</p></div><span>{conversion}% 成交占比</span></div><div className="funnel-flow"><FunnelStep label="线索" value={leads} tone="lead" /><FunnelArrow /><FunnelStep label="意向客户" value={intents} tone="intent" /><FunnelArrow /><FunnelStep label="客户" value={customers} tone="customer" /></div><div className="funnel-foot"><span>{lost} 条暂不跟进</span><button className="text-button" onClick={() => onNavigate('leads')}>查看线索</button></div></section>
-    <section className="table-panel tactic-review-panel"><div className="table-toolbar"><div><h2>获客路径结果</h2><span>按每份行业获客路径查看咨询、信息补全、人工推进和当前业务结果。</span></div></div>{reviewRows.length ? <><div className="review-truth-note">只统计当前记录中能确认的状态：不会根据客户今天的阶段倒推他曾经是否预约或进入过方案。</div><div className="table-scroll"><table><thead><tr><th>获客路径</th><th>咨询</th><th>资料完整</th><th>人工可推进</th><th>当前预约</th><th>当前方案/报价</th><th>成交</th><th>未推进</th></tr></thead><tbody>{reviewRows.map((row) => <tr key={row.pack.id}><td><div className="review-path-name"><strong>{row.pack.name}</strong><span>{channelById(row.pack.channelId).shortLabel} · {row.pack.primaryGoal}</span></div></td><td>{row.consultations}</td><td>{row.informationComplete}</td><td>{row.manuallyReady}</td><td>{row.appointments}</td><td>{row.proposalOrQuote}</td><td>{row.customers}</td><td>{row.notMoving}</td></tr>)}</tbody></table></div></> : <EmptyState icon={<ClipboardList size={24} />} title="还没有可复盘的获客路径" description="从已启用打法的匹配渠道登记咨询后，这里才会形成可追溯的路径结果。" action={<button className="button button-secondary" onClick={() => onNavigate('acquisition')}>去配置获客路径<ArrowRight size={15} /></button>} />}</section>
-    <section className="review-grid-core"><div className="table-panel"><div className="table-toolbar"><div><h2>来源结果</h2><span>来源与打法字段会一起回收，先判断哪种动作带来的咨询更值得继续跟进。</span></div></div>{sourceRows.length ? <div className="table-scroll"><table><thead><tr><th>来源</th><th>咨询</th><th>资料完整</th><th>人工可推进</th><th>成交</th></tr></thead><tbody>{sourceRows.map((row) => <tr key={row.source}><td><strong>{row.source}</strong></td><td>{row.total}</td><td>{row.informationComplete}</td><td>{row.manuallyReady}</td><td>{row.customers}</td></tr>)}</tbody></table></div> : <EmptyState icon={<BarChart3 size={24} />} title="暂时没有可复盘的数据" description="先在线索中记录来源，后续推进到意向客户和客户后，这里会形成完整结果。" action={<button className="button button-secondary" onClick={() => onNavigate('leads')}>去记录线索<ArrowRight size={15} /></button>} />}</div><aside className="review-note"><ClipboardList size={20} /><h2>复盘先看什么</h2><ol><li>哪个来源带来的咨询更容易补全资料？</li><li>人工判断后，哪些路径仍然值得推进？</li><li>预约、方案和成交卡在了哪一步？</li></ol><p>没有真实来源、字段和状态记录时，系统不会给出看似聪明但没有依据的结论。</p></aside></section>
+    <section className="table-panel tactic-review-panel"><div className="table-toolbar"><div><h2>获客路径结果</h2><span>按每份行业获客路径查看咨询、信息补全、人工推进和已记录的业务结果。</span></div></div>{reviewRows.length ? <><div className="review-truth-note">已记录的推进事项会累计统计。早期没有过程记录的存量客户，只按当前能确认的状态有限补齐，不会倒推无法确认的历史过程。</div><div className="table-scroll"><table><thead><tr><th>获客路径</th><th>咨询</th><th>资料完整</th><th>人工可推进</th><th>已记录预约</th><th>已记录方案/报价</th><th>已记录成交</th><th>未推进</th></tr></thead><tbody>{reviewRows.map((row) => <tr key={row.pack.id}><td><div className="review-path-name"><strong>{row.pack.name}</strong><span>{channelById(row.pack.channelId).shortLabel} · {row.pack.primaryGoal}</span></div></td><td>{row.consultations}</td><td>{row.informationComplete}</td><td>{row.manuallyReady}</td><td>{row.appointments}</td><td>{row.proposalOrQuote}</td><td>{row.customers}</td><td>{row.notMoving}</td></tr>)}</tbody></table></div></> : <EmptyState icon={<ClipboardList size={24} />} title="还没有可复盘的获客路径" description="从已启用打法的匹配渠道登记咨询后，这里才会形成可追溯的路径结果。" action={<button className="button button-secondary" onClick={() => onNavigate('acquisition')}>去配置获客路径<ArrowRight size={15} /></button>} />}</section>
+    <section className="review-grid-core"><div className="table-panel"><div className="table-toolbar"><div><h2>来源结果</h2><span>来源与打法字段会一起回收，先判断哪种动作带来的咨询更值得继续跟进。</span></div></div>{sourceRows.length ? <div className="table-scroll"><table><thead><tr><th>来源</th><th>咨询</th><th>资料完整</th><th>人工可推进</th><th>已记录成交</th></tr></thead><tbody>{sourceRows.map((row) => <tr key={row.source}><td><strong>{row.source}</strong></td><td>{row.total}</td><td>{row.informationComplete}</td><td>{row.manuallyReady}</td><td>{row.customers}</td></tr>)}</tbody></table></div> : <EmptyState icon={<BarChart3 size={24} />} title="暂时没有可复盘的数据" description="先在线索中记录来源，后续推进到意向客户和客户后，这里会形成完整结果。" action={<button className="button button-secondary" onClick={() => onNavigate('leads')}>去记录线索<ArrowRight size={15} /></button>} />}</div><aside className="review-note"><ClipboardList size={20} /><h2>复盘先看什么</h2><ol><li>哪个来源带来的咨询更容易补全资料？</li><li>人工判断后，哪些路径仍然值得推进？</li><li>预约、方案和成交卡在了哪一步？</li></ol><p>没有真实来源、字段和状态记录时，系统不会给出看似聪明但没有依据的结论。</p></aside></section>
   </>
 }
 
@@ -864,7 +913,7 @@ function ChannelTaskDialog({ channel, task, onClose, onSubmit }: { channel: Chan
   </div>
 }
 
-function RecordDialog({ stage, record, sourceOptions, defaultSource = '', tacticPack, onClose, onSubmit }: { stage: Exclude<Stage, 'lost'>; record?: CustomerRecord; sourceOptions: SourceOption[]; defaultSource?: string; tacticPack?: GrowthTacticPack; onClose: () => void; onSubmit: (formData: FormData) => void }) {
+function RecordDialog({ stage, record, stageEvents = [], sourceOptions, defaultSource = '', tacticPack, onClose, onSubmit }: { stage: Exclude<Stage, 'lost'>; record?: CustomerRecord; stageEvents?: CustomerStageEvent[]; sourceOptions: SourceOption[]; defaultSource?: string; tacticPack?: GrowthTacticPack; onClose: () => void; onSubmit: (formData: FormData) => void }) {
   const [selectedStage, setSelectedStage] = useState<Exclude<Stage, 'lost'>>(record?.stage === 'lost' ? stage : record?.stage ?? stage)
   const [tacticDraftValues, setTacticDraftValues] = useState<TacticLeadValues>(record?.tacticLeadValues || {})
   const [tacticQualificationStatus, setTacticQualificationStatus] = useState<TacticQualificationStatus>(record?.tacticQualificationStatus || '')
@@ -896,8 +945,29 @@ function RecordDialog({ stage, record, sourceOptions, defaultSource = '', tactic
         <label className="field"><span>下一步日期</span><input name="nextDate" type="date" defaultValue={record?.nextDate ?? ''} /></label>
         <label className="field field-wide"><span>下一步动作</span><input name="nextAction" defaultValue={record?.nextAction ?? ''} placeholder={tacticPack?.followUpSteps[0]?.action || '例如：明天电话确认到店时间'} /></label>
         <label className="field field-wide"><span>备注</span><textarea name="note" rows={2} defaultValue={record?.note ?? ''} placeholder="可选，记录需要留意的事情" /></label>
+        {record && <section className="customer-event-history field-wide" aria-label="推进记录"><div><h3>推进记录</h3><small>保存客户资料后，可在列表中继续补充每一次预约、方案、报价或成交。</small></div>{stageEvents.length ? <div className="customer-event-list">{[...stageEvents].sort((left, right) => right.occurredAt.localeCompare(left.occurredAt) || right.createdAt.localeCompare(left.createdAt)).slice(0, 5).map((event) => <article className="customer-event-row" key={event.id}><div><strong className="customer-event-type">{event.type}</strong><span>{formatDate(event.occurredAt)}</span></div>{event.note && <p>{event.note}</p>}</article>)}</div> : <p className="customer-event-empty">暂时没有推进记录。</p>}</section>}
       </div>
       <div className="dialog-foot"><button className="button button-secondary" type="button" onClick={onClose}>取消</button><button className="button button-primary" type="submit">保存<Check size={16} /></button></div>
+    </form>
+  </div>
+}
+
+function CustomerStageEventDialog({ record, onClose, onSubmit }: { record: CustomerRecord; onClose: () => void; onSubmit: (formData: FormData) => void }) {
+  const [selectedType, setSelectedType] = useState<CustomerStageEvent['type']>(customerStageEventDefinitions[0].type)
+  const definition = customerStageEventByType(selectedType) || customerStageEventDefinitions[0]
+  const nextStageLabel = definition.nextStage === 'intent' ? '意向客户' : definition.nextStage === 'customer' ? '客户' : definition.nextStage === 'lost' ? '暂不跟进' : ''
+  const nextStatusLabel = definition.nextStatus || ''
+  return <div className="dialog-backdrop" role="presentation">
+    <form className="dialog customer-stage-event-dialog" onSubmit={(event) => { event.preventDefault(); onSubmit(new FormData(event.currentTarget)) }}>
+      <div className="dialog-head"><div><h2>记录推进事项</h2><p>只记录已经真实发生的事项。保存后，会在客户档案和复盘中保留依据。</p></div><button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button></div>
+      <div className="customer-event-summary"><div><span>客户</span><strong>{record.name}</strong></div><div><span>来源</span><strong>{record.source || '未记录来源'}</strong></div><div><span>当前情况</span><strong>{record.stage === 'lost' ? '暂不跟进' : stageMeta[record.stage].label} · {record.status}</strong></div></div>
+      <div className="form-grid">
+        <label className="field field-wide"><span>本次推进事项</span><select name="type" value={selectedType} onChange={(event) => setSelectedType(event.target.value as CustomerStageEvent['type'])}>{customerStageEventDefinitions.map((item) => <option key={item.type} value={item.type}>{item.type}</option>)}</select></label>
+        <section className="customer-event-effect field-wide"><strong>{definition.description}</strong><p>{nextStageLabel && nextStatusLabel ? `保存后会同步为：${nextStageLabel} · ${nextStatusLabel}` : '本次只保留过程记录，不改变当前阶段和状态。'}</p></section>
+        <label className="field"><span>发生日期</span><input name="occurredAt" type="date" defaultValue={todayISO()} /></label>
+        <label className="field field-wide"><span>补充说明</span><textarea name="note" rows={3} placeholder="例如：已约好周六下午到店，客户会带现场尺寸和照片" /></label>
+      </div>
+      <div className="dialog-foot"><button className="button button-secondary" type="button" onClick={onClose}>取消</button><button className="button button-primary" type="submit">保存记录<Check size={16} /></button></div>
     </form>
   </div>
 }
