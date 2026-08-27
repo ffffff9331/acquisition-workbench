@@ -402,6 +402,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .tactic-pack-overview li strong { display: block; color: #4a5d52; font-size: 10px; }
 .tactic-call-to-action { margin: 12px 0 0; padding: 9px 10px; color: #70613b; font-size: 10px; line-height: 1.55; background: #fff9e9; border: 1px solid #eee1b6; border-radius: 4px; }
 .tactic-call-to-action strong { display: block; margin-bottom: 3px; color: #75632b; font-size: 10px; }
+.tactic-content-promise, .tactic-experiment-focus, .tactic-one-variable { margin: 13px 0 0; padding: 9px 10px; color: #5d7168; font-size: 10px; line-height: 1.55; background: #f6faf8; border: 1px solid #dce8e1; border-radius: 4px; }.tactic-content-promise strong, .tactic-experiment-focus strong, .tactic-one-variable strong { display: block; margin-bottom: 3px; color: #486257; font-size: 10px; }.tactic-one-variable { color: #70613b; background: #fff9e9; border-color: #eee1b6; }.tactic-one-variable strong { color: #75632b; }
 .industry-referral-field { display: grid; grid-template-columns: 150px minmax(0, 360px); align-items: center; gap: 12px; margin-top: 12px; padding: 13px 0; border-top: 1px solid #e5ece8; }
 .industry-referral-field span { color: #435d53; font-size: 10px; font-weight: 750; }
 .industry-referral-field input { width: 100%; min-height: 38px; padding: 0 11px; color: #31473f; font: inherit; font-size: 11px; background: #fff; border: 1px solid #cfded7; border-radius: 5px; outline: none; }

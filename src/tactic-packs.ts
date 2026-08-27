@@ -15,6 +15,19 @@ export type TacticFollowUpStep = {
   completionSignal: string
 }
 
+export type TacticExecutionStep = {
+  timing: string
+  action: string
+  completionSignal: string
+}
+
+export type TacticExperimentPlan = {
+  focus: string
+  primaryMetric: string
+  guardrailMetrics: string[]
+  oneVariableRule: string
+}
+
 export type GrowthTacticPack = {
   id: string
   name: string
@@ -27,6 +40,10 @@ export type GrowthTacticPack = {
   entryScenarios: string[]
   researchConstraints: string[]
   contentConstraints: string[]
+  contentPromise: string
+  prePublishChecks: string[]
+  channelExecutionSteps: TacticExecutionStep[]
+  experimentPlan: TacticExperimentPlan
   callToAction: string
   leadFields: TacticLeadField[]
   qualificationRules: string[]
@@ -96,7 +113,7 @@ export const BATHROOM_DOUYIN_MEASUREMENT_TACTIC_ID = 'bathroom-douyin-measuremen
 export const bathroomDouyinMeasurementTactic: GrowthTacticPack = {
   id: BATHROOM_DOUYIN_MEASUREMENT_TACTIC_ID,
   name: '卫浴短视频 · 到店/量尺预约',
-  version: '1.0',
+  version: '1.1',
   industryPackId: 'bathroom-industry-rules-v2',
   channelId: 'douyin',
   description: '面向本地卫浴门店的短视频预约路径：用真实安装与空间问题吸引接近决策的客户，再把咨询推进到到店或量尺。它不提供固定标题，也不承诺预约或成交结果。',
@@ -105,6 +122,24 @@ export const bathroomDouyinMeasurementTactic: GrowthTacticPack = {
   entryScenarios: ['小户型卫生间布局与产品适配', '旧房更换、局部改造与安装条件判断', '坑距、水压、排污、尺寸、收纳或价格包含范围的比较'],
   researchConstraints: ['优先研究本地客户公开提出的尺寸、安装、价格、交付和旧房问题。', '每个机会都必须说明现场条件、需要证明的材料和一个主要承接动作。', '没有真实来源时，不把泛行业常识写成客户正在关心的问题。'],
   contentConstraints: ['开头从一个可判断的卫生间现场问题切入，不用制造焦虑。', '展示真实产品规格、量尺、安装过程或获得授权的案例作为证明。', '正文只引导一个主要动作，不让客户在私信、加微信、到店和量尺之间猜下一步。'],
+  contentPromise: '帮助本地、接近装修或换新的卫生间业主判断需要先补充什么现场信息，并明确下一步只需私信尺寸或户型情况。',
+  prePublishChecks: [
+    '封面、标题、开头和主体只兑现同一个具体现场问题，不用泛“卫生间避坑”承诺替代实际判断。',
+    '内容中保留与问题直接相关的真实规格、量尺、安装过程或已获授权的案例材料，无法证明的结论不写成事实。',
+    '发布前确认唯一下一步是私信尺寸或户型情况，并由门店人工承接；不同时要求加微信、到店和量尺。',
+    '明确本次内容面对的本地服务范围和人工回复安排，不把不确定的适配、价格或预约写成承诺。',
+  ],
+  channelExecutionSteps: [
+    { timing: '发布前', action: '确认内容关联的来源编号、人工承接人和本次服务范围，确保客户咨询后能被真实记录与回复。', completionSignal: '发布任务已具备来源编号，负责人和承接安排已明确。' },
+    { timing: '出现目标问题的评论或私信时', action: '人工识别具体的尺寸、安装、改造或时间问题，将真实咨询登记为线索并关联来源；泛互动不直接算有效线索。', completionSignal: '真实咨询已进入线索，或已记录不匹配原因。' },
+    { timing: '本轮预设复盘时点', action: '回看内容承诺、咨询质量、资料补全和后续预约，不以播放量单独判断是否继续投入。', completionSignal: '已记录主指标、护栏指标和下一轮仅调整的一项内容变量。' },
+  ],
+  experimentPlan: {
+    focus: '验证哪一种本地卫生间现场问题切入，能带来愿意补全现场资料的咨询。',
+    primaryMetric: '补全打法包必填现场信息的线索数。',
+    guardrailMetrics: ['封面、标题、开头与正文是否兑现同一承诺。', '人工是否能在明确服务范围和回复节奏内承接咨询。', '负向反馈、无效咨询和后续服务成本是否异常。'],
+    oneVariableRule: '一轮只改变一个主要变量，例如现场问题切入、首屏表达或主要动作的表述；其余条件尽量保持一致。',
+  },
   callToAction: '私信卫生间尺寸或户型情况，由门店人工确认是否适合预约到店或量尺。',
   leadFields: [
     { id: 'service-area', label: '所在区域', purpose: '确认是否在当前服务范围内。', required: true, placeholder: '例如：杭州临平区' },
@@ -143,6 +178,10 @@ export function growthTacticPackPayload(pack?: GrowthTacticPack) {
     entryScenarios: pack.entryScenarios,
     researchConstraints: pack.researchConstraints,
     contentConstraints: pack.contentConstraints,
+    contentPromise: pack.contentPromise,
+    prePublishChecks: pack.prePublishChecks,
+    channelExecutionSteps: pack.channelExecutionSteps,
+    experimentPlan: pack.experimentPlan,
     callToAction: pack.callToAction,
     leadFields: pack.leadFields,
     qualificationRules: pack.qualificationRules,
