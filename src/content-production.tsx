@@ -7,6 +7,7 @@ import type { GeneratedTopicCandidate, OpportunityChannelPerformance, ResearchEv
 import { ContentReviewPanel, contentDraftFingerprint, emptyContentQualityReview, evaluateContentRules, normalizeContentQualityReview, type ContentQualityReview, type ContentRevisionProposal } from './content-review'
 import { ContentLearningPanel, contentLearningResultFingerprint, normalizeContentLearnings, type ContentLearningRecord } from './content-learning'
 import { industryRulePayload, type IndustryRulePack } from './industry-rules'
+import { growthTacticPackPayload, type GrowthTacticPack } from './tactic-packs'
 
 export type ContentTaskStatus = '简报中' | '草稿中' | '待检查' | '已锁定'
 
@@ -61,6 +62,7 @@ export type ContentTask = {
   id: string
   opportunityId: string
   industryPackId: string
+  tacticPackId: string
   title: string
   targetCustomer: string
   buyerStage: string
@@ -178,6 +180,7 @@ export function normalizeContentProductionData(value: unknown): ContentProductio
       id: clean(task.id, 120) || createId('content-task'),
       opportunityId: clean(task.opportunityId, 120),
       industryPackId: clean(task.industryPackId, 200),
+      tacticPackId: clean(task.tacticPackId, 200),
       title: clean(task.title, 200),
       targetCustomer: clean(task.targetCustomer, 600),
       buyerStage: clean(task.buyerStage, 120),
@@ -229,6 +232,7 @@ export function createContentTaskFromOpportunity(opportunity: GeneratedTopicCand
     id: createId('content-task'),
     opportunityId: opportunity.id,
     industryPackId: opportunity.industryPackId,
+    tacticPackId: opportunity.tacticPackId,
     title: opportunity.title,
     targetCustomer: opportunity.targetCustomer,
     buyerStage: opportunity.buyerStage,
@@ -297,7 +301,7 @@ function formatTime(value: string) {
   return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
 }
 
-export function ContentProductionPanel({ data, opportunities, evidence, industryPack, enabledChannels, performanceByOpportunity, aiSettings, aiSecrets, onChange, onToast, onOpenAIService, onOfficialUsage, onOpenChannel }: { data: ContentProductionData; opportunities: GeneratedTopicCandidate[]; evidence: ResearchEvidence[]; industryPack?: IndustryRulePack; enabledChannels: ChannelId[]; performanceByOpportunity: Record<string, OpportunityChannelPerformance[]>; aiSettings: AIServiceSettings; aiSecrets: AISecretStatus; onChange: (updater: (current: ContentProductionData) => ContentProductionData) => void; onToast: (message: string) => void; onOpenAIService: () => void; onOfficialUsage: (usage: { pointsCharged: number; balanceAfter: number }) => void; onOpenChannel: (channelId: ChannelId) => void }) {
+export function ContentProductionPanel({ data, opportunities, evidence, industryPack, tacticPack, enabledChannels, performanceByOpportunity, aiSettings, aiSecrets, onChange, onToast, onOpenAIService, onOfficialUsage, onOpenChannel }: { data: ContentProductionData; opportunities: GeneratedTopicCandidate[]; evidence: ResearchEvidence[]; industryPack?: IndustryRulePack; tacticPack?: GrowthTacticPack; enabledChannels: ChannelId[]; performanceByOpportunity: Record<string, OpportunityChannelPerformance[]>; aiSettings: AIServiceSettings; aiSecrets: AISecretStatus; onChange: (updater: (current: ContentProductionData) => ContentProductionData) => void; onToast: (message: string) => void; onOpenAIService: () => void; onOfficialUsage: (usage: { pointsCharged: number; balanceAfter: number }) => void; onOpenChannel: (channelId: ChannelId) => void }) {
   const [addingChannel, setAddingChannel] = useState<ChannelId>('douyin')
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
@@ -305,6 +309,7 @@ export function ContentProductionPanel({ data, opportunities, evidence, industry
   const activeVariant = activeTask?.variants.find((variant) => variant.id === activeTask.activeVariantId) || activeTask?.variants[0]
   const activeOpportunity = activeTask ? opportunities.find((item) => item.id === activeTask.opportunityId) : undefined
   const appliedIndustryPack = activeTask && industryPack && activeTask.industryPackId === industryPack.id ? industryPack : undefined
+  const appliedTacticPack = activeTask && tacticPack && activeTask.tacticPackId === tacticPack.id ? tacticPack : undefined
   const activeLearning = activeVariant ? data.learnings.find((item) => item.taskId === activeTask?.id && item.variantId === activeVariant.id) : undefined
   const validatedLearnings = data.learnings.filter((item) => {
     if (item.status !== '已采用' || activeVariant && item.channelId !== activeVariant.channelId) return false
@@ -432,6 +437,7 @@ export function ContentProductionPanel({ data, opportunities, evidence, industry
             assetRequirements: activeTask.assetRequirements,
           },
           industryRules: industryRulePayload(appliedIndustryPack),
+          tacticPack: growthTacticPackPayload(appliedTacticPack),
           evidence: selectedEvidence.map((item) => ({ id: item.id, title: item.title, url: item.url, summary: item.summary, publishedDate: item.publishedDate })),
           channel: { id: activeVariant.channelId, name: channelById(activeVariant.channelId).shortLabel, guidance: channelGuidance(activeVariant.channelId) },
           currentDraft: {

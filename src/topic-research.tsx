@@ -4,6 +4,7 @@ import { generateWithConfiguredService } from './ai-generation'
 import type { AISecretStatus, AIServiceSettings } from './ai-service'
 import { channelById, type ChannelId } from './channels'
 import { buildIndustrySearchQuery, evaluateOpportunityByIndustryRules, industryRulePayload, type IndustryRulePack } from './industry-rules'
+import { growthTacticPackPayload, type GrowthTacticPack } from './tactic-packs'
 
 export type ResearchSource = 'web' | 'douyin' | 'xiaohongshu' | 'wechat' | 'bilibili'
 export type ResearchFreshness = 'week' | 'month' | 'year' | 'all'
@@ -60,6 +61,7 @@ export type TopicResearchData = {
 export type GeneratedTopicCandidate = {
   id: string
   industryPackId: string
+  tacticPackId: string
   title: string
   customerQuestion: string
   targetCustomer: string
@@ -134,6 +136,7 @@ export function normalizeTopicResearchData(value: unknown): TopicResearchData {
     ? (value as Partial<TopicResearchData>).generatedTopics!.filter((item): item is GeneratedTopicCandidate => Boolean(item && typeof item.title === 'string')).map((item) => ({
       id: item.id || `generated-topic-${Date.now()}`,
       industryPackId: typeof item.industryPackId === 'string' ? item.industryPackId.slice(0, 200) : '',
+      tacticPackId: typeof item.tacticPackId === 'string' ? item.tacticPackId.slice(0, 200) : '',
       title: item.title.trim().slice(0, 160),
       customerQuestion: typeof item.customerQuestion === 'string' ? item.customerQuestion.trim().slice(0, 300) : '',
       targetCustomer: typeof item.targetCustomer === 'string' ? item.targetCustomer.trim().slice(0, 300) : '',
@@ -228,7 +231,7 @@ function opportunityReadiness(item: GeneratedTopicCandidate, evidence: ResearchE
   return { label: '证据不足', tone: 'blocked' }
 }
 
-export function TopicResearchPanel({ data, industryPack, aiSettings, aiSecrets, enabledChannels, performanceByOpportunity, onChange, onToast, onOpenAIService, onOfficialUsage, onAdoptOpportunity, onOpenChannel }: { data: TopicResearchData; industryPack?: IndustryRulePack; aiSettings: AIServiceSettings; aiSecrets: AISecretStatus; enabledChannels: ChannelId[]; performanceByOpportunity: Record<string, OpportunityChannelPerformance[]>; onChange: (updater: (current: TopicResearchData) => TopicResearchData) => void; onToast: (message: string) => void; onOpenAIService: () => void; onOfficialUsage: (usage: { pointsCharged: number; balanceAfter: number }) => void; onAdoptOpportunity: (opportunity: GeneratedTopicCandidate, channelId: ChannelId) => string; onOpenChannel: (channelId: ChannelId) => void }) {
+export function TopicResearchPanel({ data, industryPack, tacticPack, aiSettings, aiSecrets, enabledChannels, performanceByOpportunity, onChange, onToast, onOpenAIService, onOfficialUsage, onAdoptOpportunity, onOpenChannel }: { data: TopicResearchData; industryPack?: IndustryRulePack; tacticPack?: GrowthTacticPack; aiSettings: AIServiceSettings; aiSecrets: AISecretStatus; enabledChannels: ChannelId[]; performanceByOpportunity: Record<string, OpportunityChannelPerformance[]>; onChange: (updater: (current: TopicResearchData) => TopicResearchData) => void; onToast: (message: string) => void; onOpenAIService: () => void; onOfficialUsage: (usage: { pointsCharged: number; balanceAfter: number }) => void; onAdoptOpportunity: (opportunity: GeneratedTopicCandidate, channelId: ChannelId) => string; onOpenChannel: (channelId: ChannelId) => void }) {
   const [query, setQuery] = useState('')
   const [source, setSource] = useState<ResearchSource>('web')
   const [freshness, setFreshness] = useState<ResearchFreshness>('month')
@@ -388,12 +391,13 @@ export function TopicResearchPanel({ data, industryPack, aiSettings, aiSecrets, 
         payload: {
           brief: data.brief,
           industryRules: industryRulePayload(industryPack),
+          tacticPack: growthTacticPackPayload(tacticPack),
           query: query.trim() || data.evidence[0]?.query || '',
           evidence: data.evidence.slice(0, 8).map((item) => ({ id: item.id, source: item.source, title: item.title, summary: item.summary, publishedDate: item.publishedDate })),
           requirements: {
             outputCount: 4,
             allowedChannels: channelIds,
-            rules: ['每条机会至少引用一条 evidenceId', '不得虚构销量、效果、客户案例或平台热度', '行动引导必须与 brief.conversionGoal 一致', '所需证明必须是商家可以实际提供的素材'],
+            rules: ['每条机会至少引用一条 evidenceId', '不得虚构销量、效果、客户案例或平台热度', '行动引导必须与 brief.conversionGoal 一致', '所需证明必须是商家可以实际提供的素材', ...(tacticPack ? [`优先推荐 ${tacticPack.channelId}，并使行动引导与当前打法包的主要动作一致`] : [])],
           },
           validatedHistory: data.generatedTopics.filter((item) => item.reviewDecision).slice(0, 8).map((item) => ({
             title: item.title,
@@ -421,7 +425,7 @@ export function TopicResearchPanel({ data, industryPack, aiSettings, aiSecrets, 
       const createdAt = new Date().toISOString()
       onChange((current) => ({
         ...current,
-        generatedTopics: generated.map((item, index) => ({ ...item, id: `generated-topic-${Date.now()}-${index}`, industryPackId: industryPack?.id || '', service: response.service!, status: '待评估', adoptedChannels: [], adoptions: [], reviewDecision: '', createdAt })),
+        generatedTopics: generated.map((item, index) => ({ ...item, id: `generated-topic-${Date.now()}-${index}`, industryPackId: industryPack?.id || '', tacticPackId: tacticPack?.id || '', service: response.service!, status: '待评估', adoptedChannels: [], adoptions: [], reviewDecision: '', createdAt })),
       }))
       if (response.usage) {
         onToast(`已形成 ${generated.length} 个获客机会，消耗 ${response.usage.pointsCharged} 积分`)
@@ -484,6 +488,7 @@ export function TopicResearchPanel({ data, industryPack, aiSettings, aiSecrets, 
         </div>
       </div>
       {industryPack && <div className="active-industry-rules"><ShieldCheck size={16} /><div><strong>{industryPack.name}正在约束本次研究</strong><p>搜索扩词、需求信号、来源筛选、机会评分和证据要求会使用此规则包；具体标题仍由当前商家资料与真实来源生成。</p></div><span>v{industryPack.version}</span></div>}
+      {tacticPack && <div className="active-tactic-pack"><Target size={16} /><div><strong>{tacticPack.name}正在组织本次路径</strong><p>选题与成稿会优先围绕这份打法包的目标客户、场景、主要承接动作和可复盘指标；不会写入固定标题或自动执行沟通。</p></div><span>v{tacticPack.version}</span></div>}
       <div className="research-directions"><div><Search size={15} /><strong>搜索方向</strong><span>每次换一个方向搜索，避免只看同一种内容。</span></div><div>{researchDirections.map((item) => <button key={item.label} type="button" title={item.hint} onClick={() => useResearchDirection(item.build)}>{item.label}</button>)}</div></div>
       {industryPack && <div className="research-directions industry"><div><Target size={15} /><strong>{industryPack.industry}扩词</strong><span>把当前产品、客户和地区带入行业搜索，不使用预制选题。</span></div><div>{industryPack.searchDirections.map((item) => <button key={item.id} type="button" title={`${item.hint} ${item.intent}`} onClick={() => useIndustrySearchDirection(item.id)}>{item.label}</button>)}</div></div>}
       <form className="topic-search-form" onSubmit={(event) => { event.preventDefault(); void runSearch() }}>

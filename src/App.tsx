@@ -31,6 +31,8 @@ import { ReferralWorkspace, emptyReferralData, normalizeReferralData, referralSo
 import { BilibiliWorkspace, bilibiliSourceOptions, emptyBilibiliData, normalizeBilibiliData, type BilibiliData } from './bilibili'
 import { IndustryRuleCatalog } from './industry-rule-catalog'
 import { industryRulePackById, industryRulePacks, normalizeIndustryPackId } from './industry-pack-registry'
+import { TacticPackCatalog } from './tactic-pack-catalog'
+import { growthTacticPackById, growthTacticPacks, type GrowthTacticPack } from './tactic-packs'
 import { emptyTopicResearchData, normalizeTopicResearchData, TopicResearchPanel, type GeneratedTopicCandidate, type OpportunityChannelPerformance, type TopicResearchData } from './topic-research'
 import { ContentProductionPanel, emptyContentProductionData, normalizeContentProductionData, type ContentProductionData } from './content-production'
 import type { IndustryRulePack } from './industry-rules'
@@ -81,10 +83,10 @@ type ChannelTask = {
 
 type SourceOption = { id: string; label: string }
 
-type WorkspaceData = { records: CustomerRecord[]; enabledChannels: ChannelId[]; installedIndustryPacks: string[]; activeIndustryPackId: string; channelTasks: ChannelTask[]; topicResearch: TopicResearchData; contentProduction: ContentProductionData; douyin: DouyinData; xiaohongshu: XiaohongshuData; wechat: WechatData; offline: OfflineData; referral: ReferralData; bilibili: BilibiliData }
+type WorkspaceData = { records: CustomerRecord[]; enabledChannels: ChannelId[]; installedIndustryPacks: string[]; activeIndustryPackId: string; installedTacticPacks: string[]; activeTacticPackId: string; channelTasks: ChannelTask[]; topicResearch: TopicResearchData; contentProduction: ContentProductionData; douyin: DouyinData; xiaohongshu: XiaohongshuData; wechat: WechatData; offline: OfflineData; referral: ReferralData; bilibili: BilibiliData }
 
 const STORAGE_KEY = 'acquisition-workbench-core-v1'
-const emptyData: WorkspaceData = { records: [], enabledChannels: [], installedIndustryPacks: [], activeIndustryPackId: '', channelTasks: [], topicResearch: emptyTopicResearchData, contentProduction: emptyContentProductionData, douyin: emptyDouyinData, xiaohongshu: emptyXiaohongshuData, wechat: emptyWechatData, offline: emptyOfflineData, referral: emptyReferralData, bilibili: emptyBilibiliData }
+const emptyData: WorkspaceData = { records: [], enabledChannels: [], installedIndustryPacks: [], activeIndustryPackId: '', installedTacticPacks: [], activeTacticPackId: '', channelTasks: [], topicResearch: emptyTopicResearchData, contentProduction: emptyContentProductionData, douyin: emptyDouyinData, xiaohongshu: emptyXiaohongshuData, wechat: emptyWechatData, offline: emptyOfflineData, referral: emptyReferralData, bilibili: emptyBilibiliData }
 
 const navItems: Array<{ id: View; label: string; icon: ReactNode }> = [
   { id: 'workspace', label: '工作台', icon: <Target size={18} /> },
@@ -137,6 +139,8 @@ function loadData(): WorkspaceData {
     const installedIndustryPacks = [...new Set(savedIndustryPacks.map(normalizeIndustryPackId).filter(Boolean))]
     const requestedActivePackId = normalizeIndustryPackId(parsed.activeIndustryPackId)
     const activeIndustryPackId = requestedActivePackId || installedIndustryPacks[0] || ''
+    const installedTacticPacks = [...new Set((Array.isArray(parsed.installedTacticPacks) ? parsed.installedTacticPacks : []).filter((id): id is string => Boolean(growthTacticPackById(id))))]
+    const requestedActiveTacticPackId = typeof parsed.activeTacticPackId === 'string' && growthTacticPackById(parsed.activeTacticPackId) ? parsed.activeTacticPackId : ''
     const douyin = normalizeDouyinData(parsed.douyin, channelTasks)
     const xiaohongshu = normalizeXiaohongshuData(parsed.xiaohongshu, channelTasks)
     const wechat = normalizeWechatData(parsed.wechat, channelTasks)
@@ -160,6 +164,8 @@ function loadData(): WorkspaceData {
       enabledChannels: normalizeEnabledChannels(parsed.enabledChannels, channelTasks, douyin, xiaohongshu, wechat, offline, referral, bilibili),
       installedIndustryPacks,
       activeIndustryPackId,
+      installedTacticPacks,
+      activeTacticPackId: requestedActiveTacticPackId,
       channelTasks,
       topicResearch,
       contentProduction,
@@ -308,6 +314,8 @@ function App() {
   const customerCount = data.records.filter((record) => record.stage === 'customer').length
   const enabledChannels = channelDefinitions.filter((channel) => data.enabledChannels.includes(channel.id))
   const activeIndustryPack = industryRulePackById(data.activeIndustryPackId)
+  const activeTacticCandidate = growthTacticPackById(data.activeTacticPackId)
+  const activeTacticPack = activeTacticCandidate && activeTacticCandidate.industryPackId === activeIndustryPack?.id && data.enabledChannels.includes(activeTacticCandidate.channelId) ? activeTacticCandidate : undefined
   const opportunityPerformance = useMemo<Record<string, OpportunityChannelPerformance[]>>(() => {
     const result: Record<string, OpportunityChannelPerformance[]> = {}
     const linkedRecords = (sourceCodes: string[]) => {
@@ -485,9 +493,25 @@ function App() {
     setData((current) => ({
       ...current,
       activeIndustryPackId: pack.id,
+      activeTacticPackId: growthTacticPackById(current.activeTacticPackId)?.industryPackId === pack.id ? current.activeTacticPackId : '',
       installedIndustryPacks: current.installedIndustryPacks.includes(pack.id) ? current.installedIndustryPacks : [...current.installedIndustryPacks, pack.id],
     }))
     showToast(`${pack.name}已设为当前规则`)
+  }
+
+  const activateTacticPack = (packId: string) => {
+    const pack = growthTacticPackById(packId)
+    if (!pack) return
+    if (data.activeIndustryPackId !== pack.industryPackId || !data.enabledChannels.includes(pack.channelId)) {
+      showToast('请先选择匹配的行业规则并启用对应渠道')
+      return
+    }
+    setData((current) => ({
+      ...current,
+      activeTacticPackId: pack.id,
+      installedTacticPacks: current.installedTacticPacks.includes(pack.id) ? current.installedTacticPacks : [...current.installedTacticPacks, pack.id],
+    }))
+    showToast(`${pack.name}已设为当前打法`)
   }
 
   const adoptResearchOpportunity = (opportunity: GeneratedTopicCandidate, channelId: ChannelId) => {
@@ -604,7 +628,7 @@ function App() {
       if (channel.id === 'bilibili') return <BilibiliWorkspace data={data.bilibili} records={data.records} onChange={(updater) => setData((current) => ({ ...current, bilibili: updater(current.bilibili) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source)} onToast={showToast} />
       return <ChannelWorkspacePage channel={channel} tasks={data.channelTasks.filter((task) => task.channelId === channel.id)} records={data.records} onBack={() => setActiveChannelId(null)} onAddTask={() => setTaskChannelId(channel.id)} onEditTask={setEditingTask} onAdvanceTask={advanceChannelTask} onAddLead={() => openRecordDialog('lead')} />
     }
-    if (view === 'acquisition') return <AcquisitionPage topicResearch={data.topicResearch} contentProduction={data.contentProduction} industryPack={activeIndustryPack} activeIndustryPackId={data.activeIndustryPackId} aiSettings={aiSettings} aiSecrets={aiSecrets} enabledChannels={data.enabledChannels} performanceByOpportunity={opportunityPerformance} onTopicResearchChange={(updater) => setData((current) => ({ ...current, topicResearch: updater(current.topicResearch) }))} onContentProductionChange={(updater) => setData((current) => ({ ...current, contentProduction: updater(current.contentProduction) }))} onToast={showToast} onOpenAIService={() => setAIServiceOpen(true)} onOfficialUsage={(usage) => setCreditAccount((current) => current ? { ...current, balance: usage.balanceAfter, updatedAt: '' } : current)} onAdoptOpportunity={adoptResearchOpportunity} onActivateIndustryRules={activateIndustryRules} onEnableChannel={enableChannel} onOpenChannel={setActiveChannelId} />
+    if (view === 'acquisition') return <AcquisitionPage topicResearch={data.topicResearch} contentProduction={data.contentProduction} industryPack={activeIndustryPack} activeIndustryPackId={data.activeIndustryPackId} tacticPack={activeTacticPack} activeTacticPackId={data.activeTacticPackId} aiSettings={aiSettings} aiSecrets={aiSecrets} enabledChannels={data.enabledChannels} performanceByOpportunity={opportunityPerformance} onTopicResearchChange={(updater) => setData((current) => ({ ...current, topicResearch: updater(current.topicResearch) }))} onContentProductionChange={(updater) => setData((current) => ({ ...current, contentProduction: updater(current.contentProduction) }))} onToast={showToast} onOpenAIService={() => setAIServiceOpen(true)} onOfficialUsage={(usage) => setCreditAccount((current) => current ? { ...current, balance: usage.balanceAfter, updatedAt: '' } : current)} onAdoptOpportunity={adoptResearchOpportunity} onActivateIndustryRules={activateIndustryRules} onActivateTacticPack={activateTacticPack} onEnableChannel={enableChannel} onOpenChannel={setActiveChannelId} />
     if (view === 'review') return <ReviewPage records={data.records} onNavigate={switchView} />
     const stage = stageForView(view)
     if (!stage) return null
@@ -641,18 +665,19 @@ function WorkspacePage({ records, leads, intents, customers, channelCount, onAdd
   </>
 }
 
-function AcquisitionPage({ topicResearch, contentProduction, industryPack, activeIndustryPackId, aiSettings, aiSecrets, enabledChannels, performanceByOpportunity, onTopicResearchChange, onContentProductionChange, onToast, onOpenAIService, onOfficialUsage, onAdoptOpportunity, onActivateIndustryRules, onEnableChannel, onOpenChannel }: { topicResearch: TopicResearchData; contentProduction: ContentProductionData; industryPack?: IndustryRulePack; activeIndustryPackId: string; aiSettings: AIServiceSettings; aiSecrets: AISecretStatus; enabledChannels: ChannelId[]; performanceByOpportunity: Record<string, OpportunityChannelPerformance[]>; onTopicResearchChange: (updater: (current: TopicResearchData) => TopicResearchData) => void; onContentProductionChange: (updater: (current: ContentProductionData) => ContentProductionData) => void; onToast: (message: string) => void; onOpenAIService: () => void; onOfficialUsage: (usage: { pointsCharged: number; balanceAfter: number }) => void; onAdoptOpportunity: (opportunity: GeneratedTopicCandidate, channelId: ChannelId) => string; onActivateIndustryRules: (packId: string) => void; onEnableChannel: (channelId: ChannelId) => void; onOpenChannel: (channelId: ChannelId) => void }) {
+function AcquisitionPage({ topicResearch, contentProduction, industryPack, activeIndustryPackId, tacticPack, activeTacticPackId, aiSettings, aiSecrets, enabledChannels, performanceByOpportunity, onTopicResearchChange, onContentProductionChange, onToast, onOpenAIService, onOfficialUsage, onAdoptOpportunity, onActivateIndustryRules, onActivateTacticPack, onEnableChannel, onOpenChannel }: { topicResearch: TopicResearchData; contentProduction: ContentProductionData; industryPack?: IndustryRulePack; activeIndustryPackId: string; tacticPack?: GrowthTacticPack; activeTacticPackId: string; aiSettings: AIServiceSettings; aiSecrets: AISecretStatus; enabledChannels: ChannelId[]; performanceByOpportunity: Record<string, OpportunityChannelPerformance[]>; onTopicResearchChange: (updater: (current: TopicResearchData) => TopicResearchData) => void; onContentProductionChange: (updater: (current: ContentProductionData) => ContentProductionData) => void; onToast: (message: string) => void; onOpenAIService: () => void; onOfficialUsage: (usage: { pointsCharged: number; balanceAfter: number }) => void; onAdoptOpportunity: (opportunity: GeneratedTopicCandidate, channelId: ChannelId) => string; onActivateIndustryRules: (packId: string) => void; onActivateTacticPack: (packId: string) => void; onEnableChannel: (channelId: ChannelId) => void; onOpenChannel: (channelId: ChannelId) => void }) {
   const [selectedChannelId, setSelectedChannelId] = useState<ChannelId>('douyin')
   const channel = channelById(selectedChannelId)
   const isEnabled = enabledChannels.includes(selectedChannelId)
   const isAvailable = selectedChannelId === 'douyin' || selectedChannelId === 'xiaohongshu' || selectedChannelId === 'wechat' || selectedChannelId === 'offline' || selectedChannelId === 'referral' || selectedChannelId === 'bilibili'
   return <>
     <PageHeader title="获客" description="选择准备使用的获客渠道。启用后即可进入对应的基础工作区。" />
-    <TopicResearchPanel data={topicResearch} industryPack={industryPack} aiSettings={aiSettings} aiSecrets={aiSecrets} enabledChannels={enabledChannels} performanceByOpportunity={performanceByOpportunity} onChange={onTopicResearchChange} onToast={onToast} onOpenAIService={onOpenAIService} onOfficialUsage={onOfficialUsage} onAdoptOpportunity={onAdoptOpportunity} onOpenChannel={onOpenChannel} />
-    <ContentProductionPanel data={contentProduction} opportunities={topicResearch.generatedTopics} evidence={topicResearch.evidence} industryPack={industryPack} enabledChannels={enabledChannels} performanceByOpportunity={performanceByOpportunity} aiSettings={aiSettings} aiSecrets={aiSecrets} onChange={onContentProductionChange} onToast={onToast} onOpenAIService={onOpenAIService} onOfficialUsage={onOfficialUsage} onOpenChannel={onOpenChannel} />
+    <TopicResearchPanel data={topicResearch} industryPack={industryPack} tacticPack={tacticPack} aiSettings={aiSettings} aiSecrets={aiSecrets} enabledChannels={enabledChannels} performanceByOpportunity={performanceByOpportunity} onChange={onTopicResearchChange} onToast={onToast} onOpenAIService={onOpenAIService} onOfficialUsage={onOfficialUsage} onAdoptOpportunity={onAdoptOpportunity} onOpenChannel={onOpenChannel} />
+    <ContentProductionPanel data={contentProduction} opportunities={topicResearch.generatedTopics} evidence={topicResearch.evidence} industryPack={industryPack} tacticPack={tacticPack} enabledChannels={enabledChannels} performanceByOpportunity={performanceByOpportunity} aiSettings={aiSettings} aiSecrets={aiSecrets} onChange={onContentProductionChange} onToast={onToast} onOpenAIService={onOpenAIService} onOfficialUsage={onOfficialUsage} onOpenChannel={onOpenChannel} />
     <section className="channel-tabs" aria-label="获客渠道">{channelDefinitions.map((item) => <button key={item.id} data-channel-id={item.id} className={selectedChannelId === item.id ? 'active' : ''} type="button" onClick={() => setSelectedChannelId(item.id)}><span className={`mini-channel-icon ${item.id}`}>{item.icon}</span>{item.shortLabel}{enabledChannels.includes(item.id) && <b><Check size={11} /></b>}</button>)}</section>
     <section className="channel-foundation-band" id="channel-foundation"><div className="channel-foundation-head"><span className={`channel-icon ${channel.id}`}>{channel.icon}</span><div><h2>{channel.label}</h2><p>{channel.description}</p></div><span className={`channel-availability ${isEnabled ? 'enabled' : isAvailable ? 'available' : 'pending'}`}>{isEnabled ? '已启用' : isAvailable ? '可启用' : '基础框架待完善'}</span></div><div className="channel-foundation-body"><div><h3>基础工作流程</h3><p>这套流程属于渠道本身，不需要先选择行业或内容方向。</p><div className="workflow-steps light">{channel.workflow.map((step, index) => <span key={step}><b>{index + 1}</b>{step}</span>)}</div></div><div className="channel-foundation-action"><small>{isAvailable || isEnabled ? `启用后即可使用${channel.shortLabel}的完整基础工作区。` : '该渠道会在基础能力完成并验证后开放。'}</small>{isEnabled ? <button className="button button-primary" onClick={() => onOpenChannel(channel.id)}>进入{channel.shortLabel}<ArrowRight size={16} /></button> : isAvailable ? <button className="button button-primary" id={`enable-channel-${channel.id}`} onClick={() => onEnableChannel(channel.id)}>启用{channel.shortLabel}<Check size={16} /></button> : <button className="button button-secondary" type="button" disabled>暂未开放</button>}</div></div></section>
     <IndustryRuleCatalog packs={industryRulePacks} activePackId={activeIndustryPackId} onActivate={onActivateIndustryRules} />
+    <TacticPackCatalog packs={growthTacticPacks} activePackId={activeTacticPackId} activeIndustryPackId={activeIndustryPackId} enabledChannels={enabledChannels} selectedChannelId={selectedChannelId} onActivate={onActivateTacticPack} />
   </>
 }
 
