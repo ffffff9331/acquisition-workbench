@@ -1,7 +1,7 @@
 {
   "name": "acquisition-workbench",
   "private": true,
-  "version": "0.28.0",
+  "version": "0.29.0",
   "description": "A desktop workspace for repeatable customer acquisition projects.",
   "author": "Acquisition Workbench",
   "type": "module",

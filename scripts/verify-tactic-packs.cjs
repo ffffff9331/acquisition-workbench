@@ -20,8 +20,10 @@ try {
   const tactics = require(outputFile)
   const packs = tactics.growthTacticPacks
 
-  assert.equal(packs.length, 1, '首批必须有一份真实可运行的打法包用于验证框架')
+  assert.ok(packs.length >= 1, '首批必须有至少一份真实可运行的打法包用于验证框架')
   assert.equal(new Set(packs.map((pack) => pack.id)).size, packs.length, '打法包 ID 必须唯一')
+  assert.ok(packs.some((pack) => pack.id === tactics.BATHROOM_DOUYIN_MEASUREMENT_TACTIC_ID), '首份卫浴抖音打法包必须保留')
+  assert.ok(packs.some((pack) => pack.id === tactics.BATHROOM_XIAOHONGSHU_CASE_TACTIC_ID), '卫浴小红书案例打法包必须进入目录')
 
   for (const pack of packs) {
     assert.ok(pack.industryPackId, `${pack.name}必须绑定一个行业规则包`)
