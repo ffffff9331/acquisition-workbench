@@ -2,7 +2,7 @@
 
 > 面向中小企业和门店的模块化客户增长工作台。
 
-- **当前版本：** `v0.25.0`
+- **当前版本：** `v0.26.0`
 - **项目状态：** 内部开发 / Windows 测试版
 - **仓库权限：** Private，不对外公开
 
@@ -174,6 +174,12 @@ npm run test:industry-packs
 npm run test:tactic-packs
 ```
 
+运行打法复盘计算测试：
+
+```powershell
+npm run test:tactic-review
+```
+
 运行 TypeScript 和生产构建：
 
 ```powershell
@@ -190,7 +196,7 @@ npm run dist:win
 
 ## Windows 测试版
 
-当前代码版本：`v0.25.0`。该版本已推送到私有仓库，但尚未上传 GitHub Release；本地 Windows x64 安装包已构建，等待使用具有发布权限的 GitHub 环境上传。GitHub 当前可下载的 `v0.24.0` 安装包不包含本版本的人工筛选与确认流转能力。
+当前代码版本：`v0.26.0`。该版本已推送到私有仓库，但尚未上传 GitHub Release；本地 Windows x64 安装包会在每轮验证后构建，等待使用具有发布权限的 GitHub 环境上传。GitHub 当前可下载的 `v0.24.0` 安装包不包含本版本的人工筛选、确认流转与打法复盘能力。
 
 当前安装包尚未进行 Windows 代码签名。首次安装时 Windows SmartScreen 可能显示未知发布者提醒。正式商业交付前需要购买代码签名证书，并建立稳定的版本升级与安装包签名流程。
 
@@ -199,7 +205,7 @@ npm run dist:win
 安装包 SHA-256：
 
 ```text
-2c4fcd2f29eba0d6bf598f78aff1925ccde1e5cd1c5ec69d9dd840bc8485fbed
+1de007728974f29c1537b0f3d72c6902cbdd004903036524458f7c919aec6216
 ```
 
 ## 目录说明

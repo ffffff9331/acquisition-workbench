@@ -33,6 +33,7 @@ import { IndustryRuleCatalog } from './industry-rule-catalog'
 import { industryRulePackById, industryRulePacks, normalizeIndustryPackId } from './industry-pack-registry'
 import { TacticPackCatalog } from './tactic-pack-catalog'
 import { growthTacticPackById, growthTacticPacks, normalizeTacticLeadValues, normalizeTacticQualificationStatus, tacticLeadInputName, tacticLeadProgress, tacticQualificationRecommendation, type GrowthTacticPack, type TacticLeadValues, type TacticQualificationStatus } from './tactic-packs'
+import { tacticReviewRows } from './tactic-review'
 import { emptyTopicResearchData, normalizeTopicResearchData, TopicResearchPanel, type GeneratedTopicCandidate, type OpportunityChannelPerformance, type TopicResearchData } from './topic-research'
 import { ContentProductionPanel, emptyContentProductionData, normalizeContentProductionData, type ContentProductionData } from './content-production'
 import type { IndustryRulePack } from './industry-rules'
@@ -816,23 +817,27 @@ function ReviewPage({ records, onNavigate }: { records: CustomerRecord[]; onNavi
   const intents = records.filter((record) => record.stage === 'intent').length
   const customers = records.filter((record) => record.stage === 'customer').length
   const lost = records.filter((record) => record.stage === 'lost').length
+  const reviewRows = useMemo(() => tacticReviewRows(records), [records])
   const sourceRows = useMemo(() => {
-    const map = new Map<string, { source: string; total: number; intents: number; customers: number }>()
+    const map = new Map<string, { source: string; total: number; informationComplete: number; manuallyReady: number; customers: number }>()
     records.forEach((record) => {
       const source = record.source || '未记录来源'
-      const current = map.get(source) ?? { source, total: 0, intents: 0, customers: 0 }
+      const current = map.get(source) ?? { source, total: 0, informationComplete: 0, manuallyReady: 0, customers: 0 }
       current.total += 1
-      if (record.stage === 'intent' || record.stage === 'customer') current.intents += 1
+      const tactic = growthTacticPackById(record.tacticPackId)
+      if (tactic && tacticLeadProgress(tactic, record.tacticLeadValues).complete) current.informationComplete += 1
+      if (tactic && tacticLeadProgress(tactic, record.tacticLeadValues).complete && record.tacticQualificationStatus === '可人工推进') current.manuallyReady += 1
       if (record.stage === 'customer') current.customers += 1
       map.set(source, current)
     })
-    return [...map.values()].sort((left, right) => right.customers - left.customers || right.intents - left.intents || right.total - left.total)
+    return [...map.values()].sort((left, right) => right.customers - left.customers || right.manuallyReady - left.manuallyReady || right.total - left.total)
   }, [records])
   const conversion = leads + intents + customers ? Math.round((customers / Math.max(leads + intents + customers, 1)) * 100) : 0
   return <>
     <PageHeader title="复盘" description="从获客来源一路看到线索、意向和客户，决定下一步把时间花在哪里。" />
     <section className="funnel-panel"><div className="funnel-heading"><div><h2>客户进程</h2><p>这是一张起点清晰的全链路底图，后续获客能力会自动把数据带进来。</p></div><span>{conversion}% 成交占比</span></div><div className="funnel-flow"><FunnelStep label="线索" value={leads} tone="lead" /><FunnelArrow /><FunnelStep label="意向客户" value={intents} tone="intent" /><FunnelArrow /><FunnelStep label="客户" value={customers} tone="customer" /></div><div className="funnel-foot"><span>{lost} 条暂不跟进</span><button className="text-button" onClick={() => onNavigate('leads')}>查看线索</button></div></section>
-    <section className="review-grid-core"><div className="table-panel"><div className="table-toolbar"><div><h2>来源结果</h2><span>先用来源判断哪些动作值得继续记录。</span></div></div>{sourceRows.length ? <div className="table-scroll"><table><thead><tr><th>来源</th><th>进入线索</th><th>进入意向</th><th>成为客户</th></tr></thead><tbody>{sourceRows.map((row) => <tr key={row.source}><td><strong>{row.source}</strong></td><td>{row.total}</td><td>{row.intents}</td><td>{row.customers}</td></tr>)}</tbody></table></div> : <EmptyState icon={<BarChart3 size={24} />} title="暂时没有可复盘的数据" description="先在线索中记录来源，后续推进到意向客户和客户后，这里会形成完整结果。" action={<button className="button button-secondary" onClick={() => onNavigate('leads')}>去记录线索<ArrowRight size={15} /></button>} />}</div><aside className="review-note"><ClipboardList size={20} /><h2>复盘先看什么</h2><ol><li>哪个来源带来了更多值得推进的人？</li><li>意向客户卡在哪个环节？</li><li>成交后的客户，何时适合回访？</li></ol><p>没有真实来源和状态记录时，系统不会给出看似聪明但没有依据的结论。</p></aside></section>
+    <section className="table-panel tactic-review-panel"><div className="table-toolbar"><div><h2>获客路径结果</h2><span>按每份行业获客路径查看咨询、信息补全、人工推进和当前业务结果。</span></div></div>{reviewRows.length ? <><div className="review-truth-note">只统计当前记录中能确认的状态：不会根据客户今天的阶段倒推他曾经是否预约或进入过方案。</div><div className="table-scroll"><table><thead><tr><th>获客路径</th><th>咨询</th><th>资料完整</th><th>人工可推进</th><th>当前预约</th><th>当前方案/报价</th><th>成交</th><th>未推进</th></tr></thead><tbody>{reviewRows.map((row) => <tr key={row.pack.id}><td><div className="review-path-name"><strong>{row.pack.name}</strong><span>{channelById(row.pack.channelId).shortLabel} · {row.pack.primaryGoal}</span></div></td><td>{row.consultations}</td><td>{row.informationComplete}</td><td>{row.manuallyReady}</td><td>{row.appointments}</td><td>{row.proposalOrQuote}</td><td>{row.customers}</td><td>{row.notMoving}</td></tr>)}</tbody></table></div></> : <EmptyState icon={<ClipboardList size={24} />} title="还没有可复盘的获客路径" description="从已启用打法的匹配渠道登记咨询后，这里才会形成可追溯的路径结果。" action={<button className="button button-secondary" onClick={() => onNavigate('acquisition')}>去配置获客路径<ArrowRight size={15} /></button>} />}</section>
+    <section className="review-grid-core"><div className="table-panel"><div className="table-toolbar"><div><h2>来源结果</h2><span>来源与打法字段会一起回收，先判断哪种动作带来的咨询更值得继续跟进。</span></div></div>{sourceRows.length ? <div className="table-scroll"><table><thead><tr><th>来源</th><th>咨询</th><th>资料完整</th><th>人工可推进</th><th>成交</th></tr></thead><tbody>{sourceRows.map((row) => <tr key={row.source}><td><strong>{row.source}</strong></td><td>{row.total}</td><td>{row.informationComplete}</td><td>{row.manuallyReady}</td><td>{row.customers}</td></tr>)}</tbody></table></div> : <EmptyState icon={<BarChart3 size={24} />} title="暂时没有可复盘的数据" description="先在线索中记录来源，后续推进到意向客户和客户后，这里会形成完整结果。" action={<button className="button button-secondary" onClick={() => onNavigate('leads')}>去记录线索<ArrowRight size={15} /></button>} />}</div><aside className="review-note"><ClipboardList size={20} /><h2>复盘先看什么</h2><ol><li>哪个来源带来的咨询更容易补全资料？</li><li>人工判断后，哪些路径仍然值得推进？</li><li>预约、方案和成交卡在了哪一步？</li></ol><p>没有真实来源、字段和状态记录时，系统不会给出看似聪明但没有依据的结论。</p></aside></section>
   </>
 }
 
