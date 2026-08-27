@@ -190,9 +190,7 @@ npm run dist:win
 
 ## Windows 测试版
 
-当前测试版本：`v0.25.0`
-
-[前往 GitHub Release 下载 Windows 安装包](https://github.com/ffffff9331/acquisition-workbench/releases/tag/v0.25.0)
+当前代码版本：`v0.25.0`。该版本已推送到私有仓库，但尚未上传 GitHub Release；本地 Windows x64 安装包已构建，等待使用具有发布权限的 GitHub 环境上传。GitHub 当前可下载的 `v0.24.0` 安装包不包含本版本的人工筛选与确认流转能力。
 
 当前安装包尚未进行 Windows 代码签名。首次安装时 Windows SmartScreen 可能显示未知发布者提醒。正式商业交付前需要购买代码签名证书，并建立稳定的版本升级与安装包签名流程。
 
@@ -201,7 +199,7 @@ npm run dist:win
 安装包 SHA-256：
 
 ```text
-2f743f6bdf4b0f243e6342c477974a15295a682c4f33e1dc547983ded6fdcb8d
+2c4fcd2f29eba0d6bf598f78aff1925ccde1e5cd1c5ec69d9dd840bc8485fbed
 ```
 
 ## 目录说明
