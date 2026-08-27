@@ -5,6 +5,7 @@ import type { AISecretStatus, AIServiceSettings } from './ai-service'
 import { channelById } from './channels'
 import { contentDraftFingerprint } from './content-review'
 import type { ContentTask, ContentVariant } from './content-production'
+import type { OrganicExperimentPlan } from './organic-experiment'
 import type { GeneratedTopicCandidate, OpportunityChannelPerformance } from './topic-research'
 
 export type ContentLearningStatus = '待确认' | '已采用'
@@ -44,8 +45,8 @@ function createId() {
   return `content-learning-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-export function contentLearningResultFingerprint(decision: string, performance: OpportunityChannelPerformance[]) {
-  const text = JSON.stringify({ decision, performance: performance.map((item) => ({ channelId: item.channelId, itemId: item.itemId, stage: item.stage, executed: item.executed, reach: item.reach, interactions: item.interactions, platformInquiries: item.platformInquiries, registeredLeads: item.registeredLeads, qualifiedLeads: item.qualifiedLeads, customers: item.customers })) })
+export function contentLearningResultFingerprint(decision: string, performance: OpportunityChannelPerformance[], experiment?: OrganicExperimentPlan) {
+  const text = JSON.stringify({ decision, experiment, performance: performance.map((item) => ({ channelId: item.channelId, itemId: item.itemId, stage: item.stage, executed: item.executed, reach: item.reach, interactions: item.interactions, platformInquiries: item.platformInquiries, registeredLeads: item.registeredLeads, qualifiedLeads: item.qualifiedLeads, customers: item.customers })) })
   let hash = 2166136261
   for (let index = 0; index < text.length; index += 1) {
     hash ^= text.charCodeAt(index)
@@ -123,7 +124,7 @@ export function ContentLearningPanel({ task, variant, opportunity, performance, 
   const totals = channelPerformance.reduce((summary, item) => ({ reach: summary.reach + item.reach, interactions: summary.interactions + item.interactions, inquiries: summary.inquiries + item.platformInquiries, leads: summary.leads + item.registeredLeads, qualified: summary.qualified + item.qualifiedLeads, customers: summary.customers + item.customers }), { reach: 0, interactions: 0, inquiries: 0, leads: 0, qualified: 0, customers: 0 })
   const hasObservedResult = channelPerformance.some((item) => item.executed || item.reach || item.interactions || item.platformInquiries || item.registeredLeads || item.qualifiedLeads || item.customers)
   const decision = opportunity?.reviewDecision || ''
-  const currentResultFingerprint = contentLearningResultFingerprint(decision, channelPerformance)
+  const currentResultFingerprint = contentLearningResultFingerprint(decision, channelPerformance, variant.organicExperiment)
   const stale = Boolean(learning && (learning.executionItemId !== variant.executionItemId || learning.resultFingerprint !== currentResultFingerprint))
   const configured = aiSettings.mode === 'official' ? Boolean(aiSettings.officialWorkspaceId && aiSecrets.officialTokenSaved) : Boolean(aiSettings.customBaseUrl && aiSettings.customModel && aiSecrets.customApiKeySaved)
   const readyReason = !variant.lockedAt ? '锁定最终版本后，才能判断实际发布的是哪一版。' : !variant.executionItemId ? `先把这份内容关联到一个${channelById(variant.channelId).shortLabel}渠道任务。` : !hasObservedResult ? `等待关联的${channelById(variant.channelId).shortLabel}任务记录发布或执行结果。` : !decision ? '结果已经回流，请先在获客机会中选择“继续投入、调整后再试或停止投入”。' : ''
@@ -148,6 +149,7 @@ export function ContentLearningPanel({ task, variant, opportunity, performance, 
           channel: { id: variant.channelId, name: channelById(variant.channelId).shortLabel },
           finalDraft: { title: variant.title, hook: variant.hook, outline: variant.outline, body: variant.body, callToAction: variant.callToAction, coverCopy: variant.coverCopy, visualPlan: variant.visualPlan },
           finalReview: variant.qualityReview.aiReview,
+          organicExperiment: variant.organicExperiment,
           humanDecision: decision,
           observedResults: channelPerformance,
         },
@@ -189,7 +191,7 @@ export function ContentLearningPanel({ task, variant, opportunity, performance, 
 
   return <div className="content-learning-panel">
     <div className="content-learning-head"><div><BookOpenCheck size={16} /><div><strong>持续学习</strong><small>只从与这份最终稿关联的渠道任务结果中提炼下次规则，不把单次结果当成行业规律。</small></div></div><span className={learning?.status === '已采用' && !stale ? 'active' : ''}>{learning?.status === '已采用' && !stale ? '已用于后续生成' : '等待人工采用'}</span></div>
-    <div className="content-learning-metrics"><span><b>{totals.reach}</b>曝光 / 到场</span><span><b>{totals.inquiries}</b>咨询</span><span><b>{totals.qualified}</b>有效线索</span><span><b>{totals.customers}</b>成交</span><span><b>{decision || '未复盘'}</b>本轮结论</span></div>
+    <div className="content-learning-metrics"><span><b>{totals.reach}</b>曝光 / 到场</span><span><b>{totals.inquiries}</b>咨询</span><span><b>{totals.qualified}</b>有效线索</span><span><b>{totals.customers}</b>成交</span><span><b>{variant.organicExperiment.primaryMetric || '未设定'}</b>本轮主指标</span></div>
     <div className="content-learning-action"><div><BarChart3 size={15} /><div><strong>{readyReason ? '还不能形成学习规则' : '可以分析本轮真实结果'}</strong><p>{readyReason || 'AI 只负责整理假设，最终是否用于下一次生成由你确认。'}</p></div></div><button className="button button-secondary small" type="button" disabled={Boolean(readyReason) || generating} onClick={() => void generateLearning()}>{generating ? <LoaderCircle className="spin" size={13} /> : learning ? <RotateCcw size={13} /> : <Sparkles size={13} />}{generating ? '正在分析' : learning ? '重新分析' : '生成学习建议'}</button></div>
     {error && <div className="service-error content-error"><AlertTriangle size={14} />{error}</div>}
     {learning && <div className={`content-learning-result ${stale ? 'stale' : ''}`}>

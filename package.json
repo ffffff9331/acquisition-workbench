@@ -1,7 +1,7 @@
 {
   "name": "acquisition-workbench",
   "private": true,
-  "version": "0.29.0",
+  "version": "0.37.0",
   "description": "A desktop workspace for repeatable customer acquisition projects.",
   "author": "Acquisition Workbench",
   "type": "module",
@@ -19,6 +19,13 @@
     "test:tactic-packs": "node scripts/verify-tactic-packs.cjs",
     "test:customer-events": "node scripts/verify-customer-events.cjs",
     "test:tactic-review": "node scripts/verify-tactic-review.cjs",
+    "test:release-confirmation": "node scripts/verify-release-confirmation.cjs",
+    "test:organic-experiment": "node scripts/verify-organic-experiment.cjs",
+    "test:delivery-configuration": "node scripts/verify-delivery-configuration.cjs",
+    "test:delivery-pack-auth": "node scripts/verify-delivery-pack-auth.cjs",
+    "test:license-console": "node scripts/verify-license-console.cjs",
+    "create:delivery-pack": "node scripts/create-delivery-pack.cjs",
+    "license:console": "node scripts/license-console.cjs",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win nsis --x64"
   },

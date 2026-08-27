@@ -1,0 +1,46 @@
+const assert = require('node:assert/strict')
+const { generateKeyPairSync } = require('node:crypto')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const { buildSync } = require('esbuild')
+const { createLicenseConsole } = require('./license-console.cjs')
+
+;(async () => {
+  const projectRoot = path.resolve(__dirname, '..')
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'acquisition-license-console-'))
+  const privateKeyPath = path.join(temporary, 'issuer-private.pem')
+  const ledgerPath = path.join(temporary, 'licenses.json')
+  const outputDir = path.join(temporary, 'issued')
+  const pair = generateKeyPairSync('ed25519')
+  fs.writeFileSync(privateKeyPath, pair.privateKey.export({ type: 'pkcs8', format: 'pem' }))
+  const publicKey = pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64')
+  const consoleApp = createLicenseConsole({ projectRoot, privateKeyPath, ledgerPath, outputDir })
+  try {
+    const port = await consoleApp.listen(0)
+    const catalog = await fetch(`http://127.0.0.1:${port}/api/catalog`).then((response) => response.json())
+    assert.ok(catalog.packs.length >= 1, '发行台必须展示已发布方案目录')
+    const installationId = 'workbench-license-console-test-001'
+    const issued = await fetch(`http://127.0.0.1:${port}/api/issue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ solutionPackId: catalog.packs[0].id, customerLabel: '测试客户', installationId }) }).then((response) => response.json())
+    assert.ok(issued.fileName.endsWith('.acqpack'), '发行台必须生成 .acqpack 文件')
+    assert.ok(fs.existsSync(path.join(outputDir, issued.fileName)), '发行台必须保存已签发文件')
+    const bundled = path.join(temporary, 'delivery-pack-auth.cjs')
+    buildSync({ entryPoints: [path.join(projectRoot, 'src/delivery-pack-auth.ts')], bundle: true, platform: 'node', format: 'cjs', outfile: bundled, logLevel: 'silent' })
+    const auth = require(bundled)
+    const verified = await auth.verifyDeliveryPackArtifact(issued.content, publicKey, installationId)
+    assert.equal(verified.ok, true, '发行台签发的包必须能被客户端签名校验通过')
+    const ledger = await fetch(`http://127.0.0.1:${port}/api/licenses`).then((response) => response.json())
+    assert.equal(ledger.licenses.length, 1, '发行台必须写入本地台账')
+    const revoked = await fetch(`http://127.0.0.1:${port}/api/revoke`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ licenseId: ledger.licenses[0].licenseId }) }).then((response) => response.json())
+    assert.equal(revoked.ok, true, '发行台必须可以登记撤销')
+    const afterRevoke = await fetch(`http://127.0.0.1:${port}/api/licenses`).then((response) => response.json())
+    assert.equal(afterRevoke.licenses[0].status, 'revoked', '撤销状态必须写入台账')
+    console.log('方案发行台测试通过：目录、签发、工作台绑定、文件落盘、台账与撤销登记均已覆盖。')
+  } finally {
+    await new Promise((resolve) => consoleApp.server.close(resolve))
+    fs.rmSync(temporary, { recursive: true, force: true })
+  }
+})().catch((error) => {
+  console.error(error)
+  process.exitCode = 1
+})

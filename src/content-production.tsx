@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { AlertTriangle, ArrowRight, Check, CircleCheckBig, Clipboard, FileText, History, Lock, Plus, RotateCcw, ShieldCheck, Sparkles, Trash2, Unlock } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BarChart3, Check, CircleCheckBig, Clipboard, FileText, History, Lock, Plus, RotateCcw, ShieldCheck, Sparkles, Trash2, Unlock } from 'lucide-react'
 import { generateWithConfiguredService } from './ai-generation'
 import type { AISecretStatus, AIServiceSettings } from './ai-service'
 import { channelById, type ChannelId } from './channels'
@@ -7,6 +7,8 @@ import type { GeneratedTopicCandidate, OpportunityChannelPerformance, ResearchEv
 import { ContentReviewPanel, contentDraftFingerprint, emptyContentQualityReview, evaluateContentRules, normalizeContentQualityReview, type ContentQualityReview, type ContentRevisionProposal } from './content-review'
 import { ContentLearningPanel, contentLearningResultFingerprint, normalizeContentLearnings, type ContentLearningRecord } from './content-learning'
 import { industryRulePayload, type IndustryRulePack } from './industry-rules'
+import { emptyOrganicExperimentPlan, normalizeOrganicExperimentPlan, organicExperimentReady, type OrganicExperimentPlan } from './organic-experiment'
+import { contentReleaseConfirmationReady, emptyContentReleaseConfirmation, normalizeContentReleaseConfirmation, type ContentReleaseConfirmation } from './release-confirmation'
 import { growthTacticPackPayload, type GrowthTacticPack } from './tactic-packs'
 
 export type ContentTaskStatus = '简报中' | '草稿中' | '待检查' | '已锁定'
@@ -52,6 +54,8 @@ export type ContentVariant = {
   claimChecks: ContentClaimCheck[]
   qualityReview: ContentQualityReview
   preflight: ContentPreflight
+  organicExperiment: OrganicExperimentPlan
+  releaseConfirmation: ContentReleaseConfirmation
   versions: ContentVersion[]
   lockedAt: string
   createdAt: string
@@ -161,6 +165,8 @@ function normalizeVariant(value: unknown): ContentVariant | null {
     })).filter((claim) => claim.statement).slice(0, 12) : [],
     qualityReview: normalizeContentQualityReview(item.qualityReview),
     preflight: normalizePreflight(item.preflight),
+    organicExperiment: normalizeOrganicExperimentPlan(item.organicExperiment),
+    releaseConfirmation: normalizeContentReleaseConfirmation(item.releaseConfirmation),
     versions: normalizeVersions(item.versions),
     lockedAt: clean(item.lockedAt, 60),
     createdAt: clean(item.createdAt, 60) || nowISO(),
@@ -217,6 +223,8 @@ function createVariant(channelId: ChannelId, title: string, callToAction: string
     claimChecks: [],
     qualityReview: emptyContentQualityReview,
     preflight: { ...emptyPreflight },
+    organicExperiment: { ...emptyOrganicExperimentPlan },
+    releaseConfirmation: { ...emptyContentReleaseConfirmation },
     versions: [],
     lockedAt: '',
     createdAt,
@@ -314,8 +322,10 @@ export function ContentProductionPanel({ data, opportunities, evidence, industry
   const validatedLearnings = data.learnings.filter((item) => {
     if (item.status !== '已采用' || activeVariant && item.channelId !== activeVariant.channelId) return false
     const opportunity = opportunities.find((candidate) => candidate.id === item.opportunityId)
+    const learningTask = data.tasks.find((task) => task.id === item.taskId)
+    const learningVariant = learningTask?.variants.find((variant) => variant.id === item.variantId)
     const matchingPerformance = (performanceByOpportunity[item.opportunityId] || []).filter((result) => result.channelId === item.channelId && result.itemId === item.executionItemId)
-    return item.resultFingerprint === contentLearningResultFingerprint(opportunity?.reviewDecision || '', matchingPerformance)
+    return item.resultFingerprint === contentLearningResultFingerprint(opportunity?.reviewDecision || '', matchingPerformance, learningVariant?.organicExperiment)
   })
   const taskHasLockedVariant = Boolean(activeTask?.variants.some((variant) => variant.lockedAt))
   const usedOpportunityIds = useMemo(() => new Set(data.tasks.map((task) => task.opportunityId)), [data.tasks])
@@ -336,6 +346,8 @@ export function ContentProductionPanel({ data, opportunities, evidence, industry
         return {
           ...next,
           preflight: draftChanged ? { ...next.preflight, reviewConfirmed: false, manualReviewed: false } : next.preflight,
+          organicExperiment: draftChanged ? { ...emptyOrganicExperimentPlan } : next.organicExperiment,
+          releaseConfirmation: draftChanged ? { ...emptyContentReleaseConfirmation } : next.releaseConfirmation,
           updatedAt: nowISO(),
         }
       })
@@ -403,6 +415,8 @@ export function ContentProductionPanel({ data, opportunities, evidence, industry
       visualPlan: version.visualPlan,
       lockedAt: '',
       preflight: { ...variant.preflight, manualReviewed: false },
+      organicExperiment: { ...emptyOrganicExperimentPlan },
+      releaseConfirmation: { ...emptyContentReleaseConfirmation },
     }))
     onToast('已恢复历史版本，请重新核对')
   }
@@ -509,12 +523,14 @@ export function ContentProductionPanel({ data, opportunities, evidence, industry
     proofReady: Boolean(activeTask.proofPlan.trim() && activeTask.assetRequirements.trim()),
     ctaReady: Boolean(activeVariant.callToAction.trim()),
     humanReady: Object.values(activeVariant.preflight).every(Boolean),
+    organicExperimentReady: organicExperimentReady(activeVariant.organicExperiment),
+    releaseReady: contentReleaseConfirmationReady(activeVariant.releaseConfirmation),
   } : null
   const localReviewChecks = activeTask && activeVariant ? evaluateContentRules(activeTask, activeVariant, evidence, appliedIndustryPack) : []
   const localReviewBlockers = localReviewChecks.filter((item) => item.status === '阻断')
   const aiReviewIsStale = Boolean(activeVariant?.qualityReview.aiReview && activeVariant.qualityReview.aiReview.draftFingerprint !== (activeVariant ? contentDraftFingerprint(activeVariant) : ''))
   const reviewReady = localReviewBlockers.length === 0 && !aiReviewIsStale
-  const canLock = Boolean(readiness?.evidenceReady && readiness.proofReady && readiness.ctaReady && readiness.humanReady && activeVariant?.body.trim() && localReviewBlockers.length === 0)
+  const canLock = Boolean(readiness?.evidenceReady && readiness.proofReady && readiness.ctaReady && readiness.humanReady && readiness.organicExperimentReady && readiness.releaseReady && activeVariant?.body.trim() && localReviewBlockers.length === 0)
 
   const toggleLock = () => {
     if (!activeVariant) return
@@ -594,11 +610,39 @@ export function ContentProductionPanel({ data, opportunities, evidence, industry
 
             <ContentReviewPanel task={activeTask} variant={activeVariant} evidence={evidence} industryPack={appliedIndustryPack} aiSettings={aiSettings} aiSecrets={aiSecrets} channelGuidance={channelGuidance(activeVariant.channelId)} validatedLearnings={validatedLearnings} onUpdateVariant={updateVariant} onApplyRevision={applyRevision} onToast={onToast} onOpenAIService={onOpenAIService} onOfficialUsage={onOfficialUsage} />
 
+            <div className={`content-organic-experiment ${readiness?.organicExperimentReady ? 'ready' : ''}`}>
+              <div className="content-organic-experiment-head"><div><BarChart3 size={16} /><div><strong>自然内容验证</strong><small>本轮不使用平台付费推广；先用真实咨询和线索验证内容。</small></div></div><span>{readiness?.organicExperimentReady ? '已设定' : '待设定'}</span></div>
+              <div className="content-organic-experiment-grid">
+                <label className="organic-confirm field field-wide"><input type="checkbox" disabled={Boolean(activeVariant.lockedAt)} checked={activeVariant.organicExperiment.naturalOnlyConfirmed} onChange={(event) => updateVariant((variant) => ({ ...variant, organicExperiment: { ...variant.organicExperiment, naturalOnlyConfirmed: event.target.checked } }))} /><span><Check size={13} /></span><div><b>本轮只记录自然发布结果</b><small>不购买平台流量；未来如使用付费推广，应单独建立记录，不能和本轮混用。</small></div></label>
+                <label className="field field-wide"><span>这轮要验证什么</span><textarea disabled={Boolean(activeVariant.lockedAt)} rows={2} value={activeVariant.organicExperiment.testQuestion} onChange={(event) => updateVariant((variant) => ({ ...variant, organicExperiment: { ...variant.organicExperiment, testQuestion: event.target.value } }))} placeholder="例如：用“先判断能不能装”的开头，能否带来愿意提供尺寸的真实咨询" /></label>
+                <label className="field"><span>主要看哪个业务信号</span><select disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.organicExperiment.primaryMetric} onChange={(event) => updateVariant((variant) => ({ ...variant, organicExperiment: { ...variant.organicExperiment, primaryMetric: event.target.value as OrganicExperimentPlan['primaryMetric'] } }))}><option value="">请选择</option><option value="真实咨询">真实咨询</option><option value="有效线索">有效线索</option><option value="预约或到店">预约或到店</option></select></label>
+                <label className="field"><span>观察到哪一天</span><input disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.organicExperiment.observationUntil} onChange={(event) => updateVariant((variant) => ({ ...variant, organicExperiment: { ...variant.organicExperiment, observationUntil: event.target.value } }))} placeholder="例如：2026-09-03" /></label>
+                <label className="field"><span>本轮只调整</span><select disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.organicExperiment.changedVariable} onChange={(event) => updateVariant((variant) => ({ ...variant, organicExperiment: { ...variant.organicExperiment, changedVariable: event.target.value as OrganicExperimentPlan['changedVariable'] } }))}><option value="">请选择</option><option value="标题">标题</option><option value="封面">封面</option><option value="开头">开头</option><option value="案例与证明">案例与证明</option><option value="行动引导">行动引导</option></select></label>
+                <label className="field"><span>出现什么情况就调整</span><input disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.organicExperiment.guardrail} onChange={(event) => updateVariant((variant) => ({ ...variant, organicExperiment: { ...variant.organicExperiment, guardrail: event.target.value } }))} placeholder="例如：咨询与内容无关，或承接人无法及时回复" /></label>
+              </div>
+            </div>
+
             <div className="content-preflight"><div className="content-preflight-head"><div><CircleCheckBig size={16} /><strong>发布前检查</strong></div><small>全部通过后，锁定本次最终版本。</small></div><div className="content-preflight-list">
               <span className={readiness?.evidenceReady ? 'done' : ''}><Check size={13} /><b>来源证据</b><small>{readiness?.evidenceReady ? '已保留真实来源' : '缺少可追溯来源'}</small></span>
               <span className={readiness?.proofReady ? 'done' : ''}><Check size={13} /><b>证明素材</b><small>{readiness?.proofReady ? '已写明证明与素材' : '补充证明计划和真实素材'}</small></span>
               {([['factsVerified', '事实已核对', '数字、价格、案例和效果承诺'], ['channelFitVerified', '渠道表达已核对', `适合${channelById(activeVariant.channelId).shortLabel}用户阅读或观看`], ['assetsReady', '素材已准备', '需要的实拍、截图或现场材料已齐'], ['reviewConfirmed', '体检问题已处理', reviewReady ? '本地阻断已清除，AI 评审结果仍由你判断' : aiReviewIsStale ? '草稿变化后需要重新评审' : `还有 ${localReviewBlockers.length} 个本地阻断问题`], ['manualReviewed', '人工已通读', '内容自然、下一步清楚、可以发布']] as Array<[keyof ContentPreflight, string, string]>).map(([key, label, note]) => { const disabled = Boolean(activeVariant.lockedAt) || key === 'reviewConfirmed' && !reviewReady; return <label key={key} className={`${activeVariant.preflight[key] ? 'done' : ''} ${disabled ? 'disabled' : ''}`}><input type="checkbox" disabled={disabled} checked={activeVariant.preflight[key]} onChange={(event) => updateVariant((variant) => ({ ...variant, preflight: { ...variant.preflight, [key]: event.target.checked } }))} /><span><Check size={13} /></span><b>{label}</b><small>{note}</small></label> })}
-            </div><div className="content-final-actions"><button className="button button-secondary" type="button" onClick={() => void copyFinal()} disabled={!activeVariant.body}><Clipboard size={15} />复制当前内容</button><button className={`button ${activeVariant.lockedAt ? 'button-secondary' : 'button-primary'}`} type="button" onClick={toggleLock} disabled={!activeVariant.lockedAt && !canLock}>{activeVariant.lockedAt ? <Unlock size={15} /> : <Lock size={15} />}{activeVariant.lockedAt ? '解除锁定' : '锁定最终版本'}</button>{activeVariant.lockedAt && <button className="button button-primary" type="button" onClick={() => onOpenChannel(activeVariant.channelId)}>进入{channelById(activeVariant.channelId).shortLabel}手工发布<ArrowRight size={15} /></button>}</div></div>
+            </div>
+              <div className={`content-release-confirmation ${readiness?.releaseReady ? 'ready' : ''}`}>
+                <div className="content-release-confirmation-head"><div><ShieldCheck size={16} /><div><strong>发布确认</strong><small>只记录这次发布需要的人、素材和平台确认；内容变化后需重新确认。</small></div></div><span>{readiness?.releaseReady ? '已补齐' : '待补齐'}</span></div>
+                <div className="content-release-grid">
+                  <label className="field"><span>是否使用 AI 生成或合成素材</span><select disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.releaseConfirmation.aiMaterial} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, aiMaterial: event.target.value as ContentReleaseConfirmation['aiMaterial'], aiLabelChecked: event.target.value === '已使用' ? variant.releaseConfirmation.aiLabelChecked : false } }))}><option value="">请选择</option><option value="未使用">未使用</option><option value="已使用">已使用</option></select></label>
+                  <label className="field"><span>是否使用客户案例、照片或反馈</span><select disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.releaseConfirmation.customerMaterial} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, customerMaterial: event.target.value as ContentReleaseConfirmation['customerMaterial'], customerMaterialAuthorized: event.target.value === '已使用' ? variant.releaseConfirmation.customerMaterialAuthorized : false } }))}><option value="">请选择</option><option value="未使用">未使用</option><option value="已使用">已使用</option></select></label>
+                  {activeVariant.releaseConfirmation.aiMaterial === '已使用' && <label className="release-check field"><input type="checkbox" disabled={Boolean(activeVariant.lockedAt)} checked={activeVariant.releaseConfirmation.aiLabelChecked} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, aiLabelChecked: event.target.checked } }))} /><span><Check size={13} /></span><div><b>已核对 AI 内容标识</b><small>按本次发布平台当日的标识方式人工确认。</small></div></label>}
+                  {activeVariant.releaseConfirmation.customerMaterial === '已使用' && <label className="release-check field"><input type="checkbox" disabled={Boolean(activeVariant.lockedAt)} checked={activeVariant.releaseConfirmation.customerMaterialAuthorized} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, customerMaterialAuthorized: event.target.checked } }))} /><span><Check size={13} /></span><div><b>案例材料已确认授权与保护方式</b><small>包括图片、反馈、聊天截图和可识别信息。</small></div></label>}
+                  <label className="field field-wide"><span>推广标识确认</span><select disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.releaseConfirmation.promotionMarking} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, promotionMarking: event.target.value as ContentReleaseConfirmation['promotionMarking'] } }))}><option value="">请选择本次情况</option><option value="不需要">已核对，本次不需要推广标识</option><option value="已按本次平台规则确认">已按本次平台规则确认推广标识</option></select><small>工作台不代替平台判断；发布时以当日规则和实际内容为准。</small></label>
+                  <label className="field"><span>发布账号</span><input disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.releaseConfirmation.publishingAccount} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, publishingAccount: event.target.value } }))} placeholder="例如：XX 卫浴成都店" /></label>
+                  <label className="field"><span>发布负责人</span><input disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.releaseConfirmation.publisher} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, publisher: event.target.value } }))} placeholder="例如：小王" /></label>
+                  <label className="field"><span>咨询承接人</span><input disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.releaseConfirmation.inquiryOwner} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, inquiryOwner: event.target.value } }))} placeholder="例如：店长 / 销售小李" /></label>
+                  <label className="field"><span>平台规则核对日期</span><input disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.releaseConfirmation.platformRulesCheckedAt} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, platformRulesCheckedAt: event.target.value } }))} placeholder="例如：2026-08-27" /></label>
+                </div>
+              </div>
+              <div className="content-final-actions"><button className="button button-secondary" type="button" onClick={() => void copyFinal()} disabled={!activeVariant.body}><Clipboard size={15} />复制当前内容</button><button className={`button ${activeVariant.lockedAt ? 'button-secondary' : 'button-primary'}`} type="button" onClick={toggleLock} disabled={!activeVariant.lockedAt && !canLock}>{activeVariant.lockedAt ? <Unlock size={15} /> : <Lock size={15} />}{activeVariant.lockedAt ? '解除锁定' : '锁定最终版本'}</button>{activeVariant.lockedAt && <button className="button button-primary" type="button" onClick={() => onOpenChannel(activeVariant.channelId)}>进入{channelById(activeVariant.channelId).shortLabel}手工发布<ArrowRight size={15} /></button>}</div>
+            </div>
 
             <ContentLearningPanel task={activeTask} variant={activeVariant} opportunity={activeOpportunity} performance={performanceByOpportunity[activeTask.opportunityId] || []} learning={activeLearning} aiSettings={aiSettings} aiSecrets={aiSecrets} onChange={saveLearning} onRemove={removeLearning} onToast={onToast} onOpenAIService={onOpenAIService} onOfficialUsage={onOfficialUsage} />
 

@@ -24,6 +24,9 @@ try {
   assert.equal(new Set(packs.map((pack) => pack.id)).size, packs.length, '打法包 ID 必须唯一')
   assert.ok(packs.some((pack) => pack.id === tactics.BATHROOM_DOUYIN_MEASUREMENT_TACTIC_ID), '首份卫浴抖音打法包必须保留')
   assert.ok(packs.some((pack) => pack.id === tactics.BATHROOM_XIAOHONGSHU_CASE_TACTIC_ID), '卫浴小红书案例打法包必须进入目录')
+  assert.ok(packs.some((pack) => pack.id === tactics.BATHROOM_REFERRAL_SERVICE_EXPERIENCE_TACTIC_ID), '卫浴老客自愿转介绍打法包必须进入目录')
+  assert.ok(packs.some((pack) => pack.id === tactics.BATHROOM_COMMUNITY_RENOVATION_TACTIC_ID), '卫浴老房社区活动打法包必须进入目录')
+  assert.ok(packs.some((pack) => pack.id === tactics.BATHROOM_DESIGNER_PARTNERSHIP_TACTIC_ID), '卫浴设计师合作打法包必须进入目录')
 
   for (const pack of packs) {
     assert.ok(pack.industryPackId, `${pack.name}必须绑定一个行业规则包`)

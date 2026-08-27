@@ -488,7 +488,7 @@ export function TopicResearchPanel({ data, industryPack, tacticPack, aiSettings,
         </div>
       </div>
       {industryPack && <div className="active-industry-rules"><ShieldCheck size={16} /><div><strong>{industryPack.name}正在约束本次研究</strong><p>搜索扩词、需求信号、来源筛选、机会评分和证据要求会使用此规则包；具体标题仍由当前商家资料与真实来源生成。</p></div><span>v{industryPack.version}</span></div>}
-      {tacticPack && <div className="active-tactic-pack"><Target size={16} /><div><strong>{tacticPack.name}正在组织本次路径</strong><p>选题与成稿会优先围绕这份打法包的目标客户、场景、主要承接动作和可复盘指标；不会写入固定标题或自动执行沟通。</p></div><span>v{tacticPack.version}</span></div>}
+      {tacticPack && <div className="active-tactic-pack"><Target size={16} /><div><strong>{tacticPack.name}正在组织本次路径</strong><p>研究、人工执行与线索承接会优先围绕这份打法包的目标客户、场景、主要动作和可复盘指标；不会写入固定标题或自动执行沟通。</p></div><span>v{tacticPack.version}</span></div>}
       <div className="research-directions"><div><Search size={15} /><strong>搜索方向</strong><span>每次换一个方向搜索，避免只看同一种内容。</span></div><div>{researchDirections.map((item) => <button key={item.label} type="button" title={item.hint} onClick={() => useResearchDirection(item.build)}>{item.label}</button>)}</div></div>
       {industryPack && <div className="research-directions industry"><div><Target size={15} /><strong>{industryPack.industry}扩词</strong><span>把当前产品、客户和地区带入行业搜索，不使用预制选题。</span></div><div>{industryPack.searchDirections.map((item) => <button key={item.id} type="button" title={`${item.hint} ${item.intent}`} onClick={() => useIndustrySearchDirection(item.id)}>{item.label}</button>)}</div></div>}
       <form className="topic-search-form" onSubmit={(event) => { event.preventDefault(); void runSearch() }}>
