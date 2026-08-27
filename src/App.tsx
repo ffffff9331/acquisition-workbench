@@ -32,7 +32,7 @@ import { BilibiliWorkspace, bilibiliSourceOptions, emptyBilibiliData, normalizeB
 import { IndustryRuleCatalog } from './industry-rule-catalog'
 import { industryRulePackById, industryRulePacks, normalizeIndustryPackId } from './industry-pack-registry'
 import { TacticPackCatalog } from './tactic-pack-catalog'
-import { growthTacticPackById, growthTacticPacks, normalizeTacticLeadValues, tacticLeadInputName, tacticLeadProgress, type GrowthTacticPack, type TacticLeadValues } from './tactic-packs'
+import { growthTacticPackById, growthTacticPacks, normalizeTacticLeadValues, normalizeTacticQualificationStatus, tacticLeadInputName, tacticLeadProgress, tacticQualificationRecommendation, type GrowthTacticPack, type TacticLeadValues, type TacticQualificationStatus } from './tactic-packs'
 import { emptyTopicResearchData, normalizeTopicResearchData, TopicResearchPanel, type GeneratedTopicCandidate, type OpportunityChannelPerformance, type TopicResearchData } from './topic-research'
 import { ContentProductionPanel, emptyContentProductionData, normalizeContentProductionData, type ContentProductionData } from './content-production'
 import type { IndustryRulePack } from './industry-rules'
@@ -55,6 +55,9 @@ type CustomerRecord = {
   note: string
   tacticPackId: string
   tacticLeadValues: TacticLeadValues
+  tacticQualificationStatus: TacticQualificationStatus
+  tacticQualificationNote: string
+  tacticQualifiedAt: string
   createdAt: string
 }
 
@@ -127,6 +130,22 @@ function tacticNextAction(pack: GrowthTacticPack, values: TacticLeadValues) {
   return pack.followUpSteps[progress.complete ? 1 : 0]?.action || ''
 }
 
+function tacticQualificationForRecord(record: CustomerRecord) {
+  const pack = growthTacticPackById(record.tacticPackId)
+  if (!pack) return null
+  const recommendation = tacticQualificationRecommendation(pack, record.tacticLeadValues)
+  const status = recommendation.status === '待补充信息'
+    ? '待补充信息'
+    : record.tacticQualificationStatus || '待人工判断'
+  return { pack, recommendation, status }
+}
+
+function qualificationTone(status: string) {
+  if (status === '可人工推进') return 'teal'
+  if (status === '暂不符合') return 'muted'
+  return 'amber'
+}
+
 function loadData(): WorkspaceData {
   try {
     const saved = window.localStorage.getItem(STORAGE_KEY)
@@ -181,6 +200,9 @@ function loadData(): WorkspaceData {
         note: record.note || '',
         tacticPackId: typeof record.tacticPackId === 'string' ? record.tacticPackId.slice(0, 200) : '',
         tacticLeadValues: normalizeTacticLeadValues(record.tacticLeadValues),
+        tacticQualificationStatus: normalizeTacticQualificationStatus(record.tacticQualificationStatus),
+        tacticQualificationNote: typeof record.tacticQualificationNote === 'string' ? record.tacticQualificationNote.slice(0, 3000) : '',
+        tacticQualifiedAt: typeof record.tacticQualifiedAt === 'string' ? record.tacticQualifiedAt.slice(0, 20) : '',
         createdAt: record.createdAt || todayISO(),
       })),
       enabledChannels: normalizeEnabledChannels(parsed.enabledChannels, channelTasks, douyin, xiaohongshu, wechat, offline, referral, bilibili),
@@ -272,6 +294,7 @@ function App() {
   const [recordSourcePreset, setRecordSourcePreset] = useState('')
   const [recordTacticPackId, setRecordTacticPackId] = useState('')
   const [editingRecord, setEditingRecord] = useState<CustomerRecord | null>(null)
+  const [intentConfirmationRecord, setIntentConfirmationRecord] = useState<CustomerRecord | null>(null)
   const [aiServiceOpen, setAIServiceOpen] = useState(false)
   const [creditAccountOpen, setCreditAccountOpen] = useState(false)
   const [creditAccount, setCreditAccount] = useState<CreditAccountSnapshot | null>(null)
@@ -427,6 +450,13 @@ function App() {
     const stage = (formData.get('stage') as Exclude<Stage, 'lost'>) || initialStage
     const tacticPack = growthTacticPackById(formData.get('tacticPackId'))
     const tacticLeadValues = tacticLeadValuesFromForm(formData, tacticPack)
+    const tacticQualificationStatus = normalizeTacticQualificationStatus(formData.get('tacticQualificationStatus'))
+    const tacticQualificationNote = formText(formData, 'tacticQualificationNote', 3000)
+    const qualificationRecommendation = tacticPack ? tacticQualificationRecommendation(tacticPack, tacticLeadValues) : null
+    if (tacticPack && stage === 'intent' && (qualificationRecommendation?.status !== '可人工推进' || tacticQualificationStatus !== '可人工推进')) {
+      showToast('请先补全关键信息，并由人工确认可以推进后再转入意向客户')
+      return
+    }
     const nextAction = formText(formData, 'nextAction') || (tacticPack && stage === 'lead' ? tacticNextAction(tacticPack, tacticLeadValues) : '')
     const nextDate = formText(formData, 'nextDate', 20) || (tacticPack && stage === 'lead' && nextAction ? todayISO() : '')
     const record: CustomerRecord = {
@@ -443,6 +473,9 @@ function App() {
       note: formText(formData, 'note', 3000),
       tacticPackId: tacticPack?.id || '',
       tacticLeadValues,
+      tacticQualificationStatus,
+      tacticQualificationNote,
+      tacticQualifiedAt: tacticQualificationStatus ? todayISO() : '',
       createdAt: todayISO(),
     }
     if (!record.name) return
@@ -458,6 +491,13 @@ function App() {
     const stage = String(formData.get('stage')) as Exclude<Stage, 'lost'>
     const tacticPack = growthTacticPackById(formData.get('tacticPackId')) || growthTacticPackById(editingRecord.tacticPackId)
     const tacticLeadValues = tacticPack ? tacticLeadValuesFromForm(formData, tacticPack) : editingRecord.tacticLeadValues
+    const tacticQualificationStatus = tacticPack ? normalizeTacticQualificationStatus(formData.get('tacticQualificationStatus')) : editingRecord.tacticQualificationStatus
+    const tacticQualificationNote = tacticPack ? formText(formData, 'tacticQualificationNote', 3000) : editingRecord.tacticQualificationNote
+    const qualificationRecommendation = tacticPack ? tacticQualificationRecommendation(tacticPack, tacticLeadValues) : null
+    if (tacticPack && editingRecord.stage === 'lead' && stage === 'intent' && (qualificationRecommendation?.status !== '可人工推进' || tacticQualificationStatus !== '可人工推进')) {
+      showToast('请先补全关键信息，并由人工确认可以推进后再转入意向客户')
+      return
+    }
     setData((current) => ({
       ...current,
       records: current.records.map((record) => record.id === editingRecord.id ? {
@@ -474,6 +514,9 @@ function App() {
         note: formText(formData, 'note', 3000),
         tacticPackId: tacticPack?.id || editingRecord.tacticPackId,
         tacticLeadValues,
+        tacticQualificationStatus,
+        tacticQualificationNote,
+        tacticQualifiedAt: tacticQualificationStatus ? record.tacticQualifiedAt || todayISO() : '',
       } : record),
     }))
     setEditingRecord(null)
@@ -491,6 +534,26 @@ function App() {
       } : record),
     }))
     showToast(nextStage === 'intent' ? '已转入意向客户' : '已转入客户')
+  }
+
+  const confirmTacticIntent = (record: CustomerRecord) => {
+    const qualification = tacticQualificationForRecord(record)
+    if (!qualification || qualification.recommendation.status !== '可人工推进' || record.tacticQualificationStatus !== '可人工推进') {
+      showToast('请先补全信息并完成人工判断')
+      return
+    }
+    setData((current) => ({
+      ...current,
+      records: current.records.map((item) => item.id === record.id ? {
+        ...item,
+        stage: 'intent',
+        status: '待联系',
+        tacticQualifiedAt: item.tacticQualifiedAt || todayISO(),
+        nextAction: item.nextAction || '联系并确认需求',
+      } : item),
+    }))
+    setIntentConfirmationRecord(null)
+    showToast('已确认并转入意向客户')
   }
 
   const markLost = (id: string) => {
@@ -668,7 +731,7 @@ function App() {
     if (view === 'review') return <ReviewPage records={data.records} onNavigate={switchView} />
     const stage = stageForView(view)
     if (!stage) return null
-    return <LifecyclePage stage={stage} records={visibleRecords} sourceOptions={activeSources} search={search} onSearch={setSearch} onAdd={() => openRecordDialog(stage)} onEdit={setEditingRecord} onMove={moveRecord} onMarkLost={markLost} onCompleteAction={setNextActionDone} />
+    return <LifecyclePage stage={stage} records={visibleRecords} sourceOptions={activeSources} search={search} onSearch={setSearch} onAdd={() => openRecordDialog(stage)} onEdit={setEditingRecord} onMove={moveRecord} onRequestTacticIntent={setIntentConfirmationRecord} onMarkLost={markLost} onCompleteAction={setNextActionDone} />
   })()
 
   return <div className="app-shell">
@@ -683,6 +746,7 @@ function App() {
     </main>
     {dialogStage && <RecordDialog stage={dialogStage} sourceOptions={activeSources} defaultSource={recordSourcePreset} tacticPack={growthTacticPackById(recordTacticPackId)} onClose={() => { setDialogStage(null); setRecordSourcePreset(''); setRecordTacticPackId('') }} onSubmit={(formData) => addRecord(formData, dialogStage)} />}
     {editingRecord && <RecordDialog record={editingRecord} sourceOptions={activeSources} stage={editingRecord.stage === 'lost' ? 'lead' : editingRecord.stage} tacticPack={growthTacticPackById(editingRecord.tacticPackId)} onClose={() => setEditingRecord(null)} onSubmit={updateRecord} />}
+    {intentConfirmationRecord && <TacticIntentConfirmationDialog record={intentConfirmationRecord} onClose={() => setIntentConfirmationRecord(null)} onEdit={() => { setIntentConfirmationRecord(null); setEditingRecord(intentConfirmationRecord) }} onConfirm={() => confirmTacticIntent(intentConfirmationRecord)} />}
     {taskChannelId && <ChannelTaskDialog channel={channelById(taskChannelId)} onClose={() => setTaskChannelId(null)} onSubmit={(formData) => addChannelTask(formData, taskChannelId)} />}
     {editingTask && <ChannelTaskDialog channel={channelById(editingTask.channelId)} task={editingTask} onClose={() => setEditingTask(null)} onSubmit={updateChannelTask} />}
     {aiServiceOpen && <AIServiceDialog settings={aiSettings} secretStatus={aiSecrets} onClose={() => setAIServiceOpen(false)} onSave={(nextSettings, nextSecrets) => { setAISettings(nextSettings); setAISecrets(nextSecrets); setAIServiceOpen(false); showToast(nextSettings.mode === 'official' ? '官方 AI 服务已保存' : '自有 AI 服务已保存') }} onToast={showToast} />}
@@ -733,13 +797,17 @@ function ChannelWorkspacePage({ channel, tasks, records, onBack, onAddTask, onEd
   </>
 }
 
-function LifecyclePage({ stage, records, sourceOptions, search, onSearch, onAdd, onEdit, onMove, onMarkLost, onCompleteAction }: { stage: Exclude<Stage, 'lost'>; records: CustomerRecord[]; sourceOptions: SourceOption[]; search: string; onSearch: (value: string) => void; onAdd: () => void; onEdit: (record: CustomerRecord) => void; onMove: (id: string, stage: Exclude<Stage, 'lost'>) => void; onMarkLost: (id: string) => void; onCompleteAction: (record: CustomerRecord) => void }) {
+function LifecyclePage({ stage, records, sourceOptions, search, onSearch, onAdd, onEdit, onMove, onRequestTacticIntent, onMarkLost, onCompleteAction }: { stage: Exclude<Stage, 'lost'>; records: CustomerRecord[]; sourceOptions: SourceOption[]; search: string; onSearch: (value: string) => void; onAdd: () => void; onEdit: (record: CustomerRecord) => void; onMove: (id: string, stage: Exclude<Stage, 'lost'>) => void; onRequestTacticIntent: (record: CustomerRecord) => void; onMarkLost: (id: string) => void; onCompleteAction: (record: CustomerRecord) => void }) {
   const copy = { lead: { title: '线索', description: '记录新进来的咨询，先确认来源、需求和是否值得继续投入。', action: '新建线索', empty: '还没有线索', helper: '新的私信、扫码、电话、到店和转介绍都可以从这里开始。' }, intent: { title: '意向客户', description: '把确认值得推进的人放在这里，安排联系、预约、方案和报价。', action: '新建意向客户', empty: '还没有意向客户', helper: '线索确认有明确需求后，可以转入这里持续推进。' }, customer: { title: '客户', description: '成交后继续记录服务、回访和下一次可能的复购或转介绍。', action: '新建客户', empty: '还没有客户', helper: '意向客户成交后，会自动进入这里。' } }[stage]
   const statusCounts = stageMeta[stage].statuses.map((status) => ({ status, count: records.filter((record) => record.status === status).length })).filter((item) => item.count > 0)
   return <>
     <PageHeader title={copy.title} description={copy.description} action={<button className="button button-primary" onClick={onAdd}><Plus size={16} />{copy.action}</button>} />
     <section className="list-summary"><div><strong>{records.length}</strong><span>当前{copy.title}</span></div>{statusCounts.map((item) => <div key={item.status}><strong>{item.count}</strong><span>{item.status}</span></div>)}<p>{sourceOptions.length ? `${copy.helper} 已有 ${sourceOptions.length} 条已执行的渠道来源可供关联。` : copy.helper}</p></section>
-    <section className="table-panel"><div className="table-toolbar"><div><h2>全部{copy.title}</h2><span>{records.length ? '按下一步日期排序' : '等待第一条记录'}</span></div><label className="search-box"><Search size={16} /><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="搜索姓名、联系方式、来源或需求" /></label></div>{records.length ? <div className="table-scroll"><table><thead><tr><th>客户</th><th>来源与需求</th><th>当前状态</th><th>下一步</th><th>负责人</th><th aria-label="操作"></th></tr></thead><tbody>{records.map((record) => <tr key={record.id}><td><button className="record-name" onClick={() => onEdit(record)}><strong>{record.name}</strong><span>{record.contact || `录入于 ${formatDate(record.createdAt)}`}</span></button></td><td><div className="source-cell"><b>{record.source}</b><span>{record.need || '暂未填写需求'}</span></div></td><td><span className={`status-pill ${statusTone(record.status)}`}>{record.status}</span></td><td><button className="next-cell" onClick={() => onEdit(record)}><b>{record.nextAction || '待安排'}</b><span>{formatDate(record.nextDate)}</span></button></td><td>{record.owner || '未分配'}</td><td><div className="row-actions">{stage === 'lead' && <button className="button button-secondary small" onClick={() => onMove(record.id, 'intent')}>转为意向<ArrowRight size={14} /></button>}{stage === 'intent' && <><button className="button button-primary small" onClick={() => onMove(record.id, 'customer')}>标记成交<Check size={14} /></button><button className="icon-button small" title="暂不跟进" aria-label="暂不跟进" onClick={() => onMarkLost(record.id)}><X size={15} /></button></>}{stage === 'customer' && <button className="button button-secondary small" onClick={() => onCompleteAction(record)}>记录回访<Check size={14} /></button>}<button className="icon-button small" title="编辑" aria-label="编辑" onClick={() => onEdit(record)}><ChevronRight size={16} /></button></div></td></tr>)}</tbody></table></div> : <EmptyState icon={<FolderPlus size={25} />} title={copy.empty} description={copy.helper} action={<button className="button button-primary" onClick={onAdd}><Plus size={16} />{copy.action}</button>} />}</section>
+    <section className="table-panel"><div className="table-toolbar"><div><h2>全部{copy.title}</h2><span>{records.length ? '按下一步日期排序' : '等待第一条记录'}</span></div><label className="search-box"><Search size={16} /><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="搜索姓名、联系方式、来源或需求" /></label></div>{records.length ? <div className="table-scroll"><table><thead><tr><th>客户</th><th>来源与需求</th><th>当前状态</th><th>下一步</th><th>负责人</th><th aria-label="操作"></th></tr></thead><tbody>{records.map((record) => {
+      const qualification = tacticQualificationForRecord(record)
+      const canConfirmIntent = qualification?.recommendation.status === '可人工推进' && record.tacticQualificationStatus === '可人工推进'
+      return <tr key={record.id}><td><button className="record-name" onClick={() => onEdit(record)}><strong>{record.name}</strong><span>{record.contact || `录入于 ${formatDate(record.createdAt)}`}</span></button></td><td><div className="source-cell"><b>{record.source}</b><span>{record.need || '暂未填写需求'}</span></div></td><td><div className="record-status-cell"><span className={`status-pill ${statusTone(record.status)}`}>{record.status}</span>{qualification && <button className={`qualification-pill ${qualificationTone(qualification.status)}`} type="button" onClick={() => onEdit(record)} title={`${qualification.pack.name}：${qualification.status}`}>{qualification.status}</button>}</div></td><td><button className="next-cell" onClick={() => onEdit(record)}><b>{record.nextAction || '待安排'}</b><span>{formatDate(record.nextDate)}</span></button></td><td>{record.owner || '未分配'}</td><td><div className="row-actions">{stage === 'lead' && (qualification ? canConfirmIntent ? <button className="button button-secondary small" onClick={() => onRequestTacticIntent(record)}>确认转为意向<ArrowRight size={14} /></button> : <button className="button button-secondary small" onClick={() => onEdit(record)}>{qualification.status === '待补充信息' ? '补充信息' : '查看判断'}<ChevronRight size={14} /></button> : <button className="button button-secondary small" onClick={() => onMove(record.id, 'intent')}>转为意向<ArrowRight size={14} /></button>)}{stage === 'intent' && <><button className="button button-primary small" onClick={() => onMove(record.id, 'customer')}>标记成交<Check size={14} /></button><button className="icon-button small" title="暂不跟进" aria-label="暂不跟进" onClick={() => onMarkLost(record.id)}><X size={15} /></button></>}{stage === 'customer' && <button className="button button-secondary small" onClick={() => onCompleteAction(record)}>记录回访<Check size={14} /></button>}<button className="icon-button small" title="编辑" aria-label="编辑" onClick={() => onEdit(record)}><ChevronRight size={16} /></button></div></td></tr>
+    })}</tbody></table></div> : <EmptyState icon={<FolderPlus size={25} />} title={copy.empty} description={copy.helper} action={<button className="button button-primary" onClick={onAdd}><Plus size={16} />{copy.action}</button>} />}</section>
   </>
 }
 
@@ -793,12 +861,55 @@ function ChannelTaskDialog({ channel, task, onClose, onSubmit }: { channel: Chan
 
 function RecordDialog({ stage, record, sourceOptions, defaultSource = '', tacticPack, onClose, onSubmit }: { stage: Exclude<Stage, 'lost'>; record?: CustomerRecord; sourceOptions: SourceOption[]; defaultSource?: string; tacticPack?: GrowthTacticPack; onClose: () => void; onSubmit: (formData: FormData) => void }) {
   const [selectedStage, setSelectedStage] = useState<Exclude<Stage, 'lost'>>(record?.stage === 'lost' ? stage : record?.stage ?? stage)
+  const [tacticDraftValues, setTacticDraftValues] = useState<TacticLeadValues>(record?.tacticLeadValues || {})
+  const [tacticQualificationStatus, setTacticQualificationStatus] = useState<TacticQualificationStatus>(record?.tacticQualificationStatus || '')
   const statuses = stageMeta[selectedStage].statuses
   const defaultStatus = record?.stage === selectedStage && statuses.includes(record.status) ? record.status : statuses[0]
   const title = record ? `编辑${stageMeta[selectedStage].label}` : `新建${stageMeta[stage].label}`
-  const tacticValues = record?.tacticLeadValues || {}
-  const tacticProgress = tacticPack ? tacticLeadProgress(tacticPack, tacticValues) : null
-  return <div className="dialog-backdrop" role="presentation"><form className="dialog" onSubmit={(event) => { event.preventDefault(); onSubmit(new FormData(event.currentTarget)) }}><div className="dialog-head"><div><h2>{title}</h2><p>把来源、联系方式、需求和下一步填写清楚，工作台才能帮你持续推进。</p></div><button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button></div><div className="form-grid"><label className="field"><span>姓名或称呼</span><input name="name" required autoFocus defaultValue={record?.name ?? ''} placeholder="例如：王女士 / 某公司负责人" /></label><label className="field"><span>联系方式</span><input name="contact" defaultValue={record?.contact ?? ''} placeholder="例如：手机号 / 微信备注名" /></label><label className="field field-wide"><span>来源</span><input name="source" list="channel-source-options" defaultValue={record?.source ?? defaultSource} placeholder="例如：扫码、电话、朋友介绍" /></label>{sourceOptions.length ? <datalist id="channel-source-options">{sourceOptions.map((source) => <option key={source.id} value={source.label} />)}</datalist> : null}<label className="field field-wide"><span>需求</span><textarea name="need" rows={3} defaultValue={record?.need ?? ''} placeholder="他想解决什么问题，是否有明确的购买或服务需求？" /></label>{tacticPack ? <fieldset className="tactic-lead-intake"><input type="hidden" name="tacticPackId" value={tacticPack.id} /><legend>按当前获客路径补充信息</legend><p><strong>{tacticPack.name}</strong>{tacticProgress?.complete ? '：关键信息已补全，仍需由人工确认适配和下一步。' : '：先补齐关键现场信息，再判断是否值得继续推进。'}</p><div className="form-grid tactic-lead-grid">{tacticPack.leadFields.map((field) => <label key={field.id} className={`field ${field.inputKind === 'longText' ? 'field-wide' : ''}`}><span>{field.label}{field.required ? <em>需要确认</em> : null}</span><small>{field.purpose}</small>{field.inputKind === 'longText' ? <textarea name={tacticLeadInputName(field.id)} rows={3} defaultValue={tacticValues[field.id] || ''} placeholder={field.placeholder || '补充客户提供的实际情况'} /> : <input name={tacticLeadInputName(field.id)} defaultValue={tacticValues[field.id] || ''} placeholder={field.placeholder || '补充客户提供的实际情况'} />}</label>)}</div><small className="tactic-lead-intake-note">{tacticProgress?.complete ? `已补全 ${tacticProgress.completedCount}/${tacticProgress.requiredCount} 项关键信息。` : `当前已补全 ${tacticProgress?.completedCount || 0}/${tacticProgress?.requiredCount || 0} 项关键信息；未补全前保留为待判断，不把咨询当成有效预约。`}</small></fieldset> : <input type="hidden" name="tacticPackId" value="" />}<label className="field"><span>当前阶段</span><select name="stage" value={selectedStage} onChange={(event) => setSelectedStage(event.target.value as Exclude<Stage, 'lost'>)}>{(Object.keys(stageMeta) as Array<Exclude<Stage, 'lost'>>).map((item) => <option key={item} value={item}>{stageMeta[item].label}</option>)}</select></label><label className="field"><span>当前状态</span><select name="status" key={`${selectedStage}-${defaultStatus}`} defaultValue={defaultStatus}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label><label className="field"><span>负责人</span><input name="owner" defaultValue={record?.owner ?? ''} placeholder="例如：张店长" /></label><label className="field"><span>下一步日期</span><input name="nextDate" type="date" defaultValue={record?.nextDate ?? ''} /></label><label className="field field-wide"><span>下一步动作</span><input name="nextAction" defaultValue={record?.nextAction ?? ''} placeholder={tacticPack?.followUpSteps[0]?.action || '例如：明天电话确认到店时间'} /></label><label className="field field-wide"><span>备注</span><textarea name="note" rows={2} defaultValue={record?.note ?? ''} placeholder="可选，记录需要留意的事情" /></label></div><div className="dialog-foot"><button className="button button-secondary" type="button" onClick={onClose}>取消</button><button className="button button-primary" type="submit">保存<Check size={16} /></button></div></form></div>
+  const tacticProgress = tacticPack ? tacticLeadProgress(tacticPack, tacticDraftValues) : null
+  const tacticRecommendation = tacticPack ? tacticQualificationRecommendation(tacticPack, tacticDraftValues) : null
+  return <div className="dialog-backdrop" role="presentation">
+    <form className="dialog" onSubmit={(event) => { event.preventDefault(); onSubmit(new FormData(event.currentTarget)) }}>
+      <div className="dialog-head"><div><h2>{title}</h2><p>把来源、联系方式、需求和下一步填写清楚，工作台才能帮你持续推进。</p></div><button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button></div>
+      <div className="form-grid">
+        <label className="field"><span>姓名或称呼</span><input name="name" required autoFocus defaultValue={record?.name ?? ''} placeholder="例如：王女士 / 某公司负责人" /></label>
+        <label className="field"><span>联系方式</span><input name="contact" defaultValue={record?.contact ?? ''} placeholder="例如：手机号 / 微信备注名" /></label>
+        <label className="field field-wide"><span>来源</span><input name="source" list="channel-source-options" defaultValue={record?.source ?? defaultSource} placeholder="例如：扫码、电话、朋友介绍" /></label>
+        {sourceOptions.length ? <datalist id="channel-source-options">{sourceOptions.map((source) => <option key={source.id} value={source.label} />)}</datalist> : null}
+        <label className="field field-wide"><span>需求</span><textarea name="need" rows={3} defaultValue={record?.need ?? ''} placeholder="他想解决什么问题，是否有明确的购买或服务需求？" /></label>
+        {tacticPack ? <fieldset className="tactic-lead-intake">
+          <input type="hidden" name="tacticPackId" value={tacticPack.id} />
+          <legend>按本次获客方式补充信息</legend>
+          <p><strong>{tacticPack.name}</strong>{tacticRecommendation?.status === '可人工推进' ? '：基本信息已齐全，请完成一次人工判断。' : '：先补齐关键现场信息，再判断是否值得继续推进。'}</p>
+          <div className="form-grid tactic-lead-grid">{tacticPack.leadFields.map((field) => <label key={field.id} className={`field ${field.inputKind === 'longText' ? 'field-wide' : ''}`}><span>{field.label}{field.required ? <em>需要确认</em> : null}</span><small>{field.purpose}</small>{field.inputKind === 'longText' ? <textarea name={tacticLeadInputName(field.id)} rows={3} value={tacticDraftValues[field.id] || ''} onChange={(event) => setTacticDraftValues((current) => ({ ...current, [field.id]: event.target.value }))} placeholder={field.placeholder || '补充客户提供的实际情况'} /> : <input name={tacticLeadInputName(field.id)} value={tacticDraftValues[field.id] || ''} onChange={(event) => setTacticDraftValues((current) => ({ ...current, [field.id]: event.target.value }))} placeholder={field.placeholder || '补充客户提供的实际情况'} />}</label>)}</div>
+          <div className="tactic-qualification"><div><span>当前建议</span><strong className={qualificationTone(tacticRecommendation?.status || '')}>{tacticRecommendation?.status || '待补充信息'}</strong><p>{tacticRecommendation?.reasons.join(' ')}</p></div><label className="field"><span>人工判断</span><select name="tacticQualificationStatus" value={tacticQualificationStatus} onChange={(event) => setTacticQualificationStatus(normalizeTacticQualificationStatus(event.target.value))}><option value="">暂不下结论</option><option value="可人工推进">可人工推进</option><option value="暂不符合">暂不符合</option></select></label><label className="field field-wide"><span>判断备注</span><textarea name="tacticQualificationNote" rows={2} defaultValue={record?.tacticQualificationNote || ''} placeholder="例如：服务范围可覆盖，客户愿意本周到店沟通" /></label></div>
+          <small className="tactic-lead-intake-note">{tacticProgress?.complete ? `已补全 ${tacticProgress.completedCount}/${tacticProgress.requiredCount} 项关键信息；选择“可人工推进”后，仍会在转入意向客户前请你确认一次。` : `当前已补全 ${tacticProgress?.completedCount || 0}/${tacticProgress?.requiredCount || 0} 项关键信息；未补全前保留为待判断，不把咨询当成有效预约。`}</small>
+        </fieldset> : <input type="hidden" name="tacticPackId" value="" />}
+        <label className="field"><span>当前阶段</span><select name="stage" value={selectedStage} onChange={(event) => setSelectedStage(event.target.value as Exclude<Stage, 'lost'>)}>{(Object.keys(stageMeta) as Array<Exclude<Stage, 'lost'>>).map((item) => <option key={item} value={item}>{stageMeta[item].label}</option>)}</select></label>
+        <label className="field"><span>当前状态</span><select name="status" key={`${selectedStage}-${defaultStatus}`} defaultValue={defaultStatus}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+        <label className="field"><span>负责人</span><input name="owner" defaultValue={record?.owner ?? ''} placeholder="例如：张店长" /></label>
+        <label className="field"><span>下一步日期</span><input name="nextDate" type="date" defaultValue={record?.nextDate ?? ''} /></label>
+        <label className="field field-wide"><span>下一步动作</span><input name="nextAction" defaultValue={record?.nextAction ?? ''} placeholder={tacticPack?.followUpSteps[0]?.action || '例如：明天电话确认到店时间'} /></label>
+        <label className="field field-wide"><span>备注</span><textarea name="note" rows={2} defaultValue={record?.note ?? ''} placeholder="可选，记录需要留意的事情" /></label>
+      </div>
+      <div className="dialog-foot"><button className="button button-secondary" type="button" onClick={onClose}>取消</button><button className="button button-primary" type="submit">保存<Check size={16} /></button></div>
+    </form>
+  </div>
+}
+
+function TacticIntentConfirmationDialog({ record, onClose, onEdit, onConfirm }: { record: CustomerRecord; onClose: () => void; onEdit: () => void; onConfirm: () => void }) {
+  const qualification = tacticQualificationForRecord(record)
+  if (!qualification) return null
+  const fieldRows = qualification.pack.leadFields.filter((field) => record.tacticLeadValues[field.id]).map((field) => ({ label: field.label, value: record.tacticLeadValues[field.id] }))
+  return <div className="dialog-backdrop" role="presentation">
+    <section className="dialog tactic-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="tactic-intent-title">
+      <div className="dialog-head"><div><h2 id="tactic-intent-title">确认转为意向客户</h2><p>确认后，这位客户会进入预约、方案和报价的跟进流程。</p></div><button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button></div>
+      <div className="tactic-confirm-summary"><span className={`qualification-pill ${qualificationTone(qualification.status)}`}>{qualification.status}</span><div><strong>{qualification.pack.name}</strong><p>{qualification.recommendation.reasons.join(' ')}</p></div></div>
+      <div className="tactic-confirm-section"><h3>已收集的信息</h3>{fieldRows.length ? <dl>{fieldRows.map((field) => <div key={field.label}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl> : <p>暂未收集到与这次获客方式相关的信息。</p>}</div>
+      <div className="tactic-confirm-section"><h3>转入前请确认</h3><ul>{qualification.pack.qualificationRules.map((rule) => <li key={rule}>{rule}</li>)}</ul>{record.tacticQualificationNote && <p className="tactic-confirm-note"><strong>判断备注：</strong>{record.tacticQualificationNote}</p>}</div>
+      <div className="dialog-foot"><button className="button button-secondary" type="button" onClick={onEdit}>返回修改</button><button className="button button-primary" type="button" onClick={onConfirm}>确认转为意向<ArrowRight size={16} /></button></div>
+    </section>
+  </div>
 }
 
 function PageHeader({ title, description, action }: { title: string; description: string; action?: ReactNode }) { return <header className="page-header"><div><h1>{title}</h1><p>{description}</p></div>{action && <div className="page-action">{action}</div>}</header> }

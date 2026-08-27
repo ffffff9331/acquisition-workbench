@@ -39,10 +39,18 @@ try {
     const blankProgress = tactics.tacticLeadProgress(pack, {})
     assert.equal(blankProgress.complete, false, `${pack.name}缺少必填信息时不能判定为信息完整`)
     assert.equal(blankProgress.completedCount, 0, `${pack.name}空线索不能拥有已补全字段`)
+    const blankRecommendation = tactics.tacticQualificationRecommendation(pack, {})
+    assert.equal(blankRecommendation.status, '待补充信息', `${pack.name}信息缺失时必须提示先补充信息`)
+    assert.equal(blankRecommendation.missingFields.length, blankProgress.requiredCount, `${pack.name}缺失字段必须可追溯`)
     const completeValues = Object.fromEntries(pack.leadFields.filter((field) => field.required).map((field) => [field.id, '已提供']))
     const completeProgress = tactics.tacticLeadProgress(pack, completeValues)
     assert.equal(completeProgress.complete, true, `${pack.name}补全必填信息后必须可以进入下一步判断`)
     assert.equal(completeProgress.completedCount, completeProgress.requiredCount, `${pack.name}完整线索的字段计数必须正确`)
+    const completeRecommendation = tactics.tacticQualificationRecommendation(pack, completeValues)
+    assert.equal(completeRecommendation.status, '可人工推进', `${pack.name}信息完整后必须只给出人工推进建议`)
+    assert.equal(completeRecommendation.missingFields.length, 0, `${pack.name}完整线索不应保留缺失字段`)
+    assert.equal(tactics.normalizeTacticQualificationStatus('可人工推进'), '可人工推进', `${pack.name}必须保留合法人工判断`)
+    assert.equal(tactics.normalizeTacticQualificationStatus('自动成交'), '', `${pack.name}不得接受未定义的自动判断`)
     assert.equal(tactics.tacticLeadInputName(pack.leadFields[0].id), `tactic-lead-${pack.leadFields[0].id}`, `${pack.name}字段必须有稳定的表单名称`)
   }
 

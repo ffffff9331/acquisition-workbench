@@ -37,6 +37,14 @@ export type GrowthTacticPack = {
 
 export type TacticLeadValues = Record<string, string>
 
+export type TacticQualificationStatus = '' | '可人工推进' | '暂不符合'
+
+export type TacticQualificationRecommendation = {
+  status: '待补充信息' | '可人工推进'
+  reasons: string[]
+  missingFields: TacticLeadField[]
+}
+
 export function normalizeTacticLeadValues(value: unknown): TacticLeadValues {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   return Object.entries(value).reduce<TacticLeadValues>((result, [key, fieldValue]) => {
@@ -59,6 +67,27 @@ export function tacticLeadProgress(pack: GrowthTacticPack, values: TacticLeadVal
     completedCount: completed.length,
     complete: completed.length === required.length,
     missing: required.filter((field) => !values[field.id]?.trim()),
+  }
+}
+
+export function normalizeTacticQualificationStatus(value: unknown): TacticQualificationStatus {
+  return value === '可人工推进' || value === '暂不符合' ? value : ''
+}
+
+export function tacticQualificationRecommendation(pack: GrowthTacticPack, values: TacticLeadValues): TacticQualificationRecommendation {
+  const progress = tacticLeadProgress(pack, values)
+  if (!progress.complete) {
+    return {
+      status: '待补充信息',
+      reasons: [`还缺少：${progress.missing.map((field) => field.label).join('、')}。`],
+      missingFields: progress.missing,
+    }
+  }
+
+  return {
+    status: '可人工推进',
+    reasons: [`已补全 ${progress.completedCount}/${progress.requiredCount} 项关键信息。`, '仍需由人工核对服务范围、现场适配和实际沟通意愿。'],
+    missingFields: [],
   }
 }
 
