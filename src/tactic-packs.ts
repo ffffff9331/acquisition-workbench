@@ -5,6 +5,8 @@ export type TacticLeadField = {
   label: string
   purpose: string
   required: boolean
+  inputKind?: 'shortText' | 'longText'
+  placeholder?: string
 }
 
 export type TacticFollowUpStep = {
@@ -33,6 +35,33 @@ export type GrowthTacticPack = {
   boundaries: string[]
 }
 
+export type TacticLeadValues = Record<string, string>
+
+export function normalizeTacticLeadValues(value: unknown): TacticLeadValues {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.entries(value).reduce<TacticLeadValues>((result, [key, fieldValue]) => {
+    const id = key.trim().slice(0, 80)
+    const text = typeof fieldValue === 'string' ? fieldValue.trim().slice(0, 1000) : ''
+    if (id && text) result[id] = text
+    return result
+  }, {})
+}
+
+export function tacticLeadInputName(fieldId: string) {
+  return `tactic-lead-${fieldId}`
+}
+
+export function tacticLeadProgress(pack: GrowthTacticPack, values: TacticLeadValues) {
+  const required = pack.leadFields.filter((field) => field.required)
+  const completed = required.filter((field) => Boolean(values[field.id]?.trim()))
+  return {
+    requiredCount: required.length,
+    completedCount: completed.length,
+    complete: completed.length === required.length,
+    missing: required.filter((field) => !values[field.id]?.trim()),
+  }
+}
+
 export const BATHROOM_DOUYIN_MEASUREMENT_TACTIC_ID = 'bathroom-douyin-measurement-v1'
 
 export const bathroomDouyinMeasurementTactic: GrowthTacticPack = {
@@ -49,11 +78,11 @@ export const bathroomDouyinMeasurementTactic: GrowthTacticPack = {
   contentConstraints: ['开头从一个可判断的卫生间现场问题切入，不用制造焦虑。', '展示真实产品规格、量尺、安装过程或获得授权的案例作为证明。', '正文只引导一个主要动作，不让客户在私信、加微信、到店和量尺之间猜下一步。'],
   callToAction: '私信卫生间尺寸或户型情况，由门店人工确认是否适合预约到店或量尺。',
   leadFields: [
-    { id: 'service-area', label: '所在区域', purpose: '确认是否在当前服务范围内。', required: true },
-    { id: 'renovation-stage', label: '装修或更换阶段', purpose: '判断客户是否接近选购、安装或改造决策。', required: true },
-    { id: 'bathroom-condition', label: '卫生间尺寸或现场情况', purpose: '确认坑距、空间、水电、排污或布局是否需要进一步判断。', required: true },
-    { id: 'target-product', label: '想看或想解决的问题', purpose: '匹配马桶、浴室柜、花洒、淋浴房或局部改造的后续动作。', required: true },
-    { id: 'contact-window', label: '可联系时间', purpose: '安排人工回复、到店或量尺沟通。', required: false },
+    { id: 'service-area', label: '所在区域', purpose: '确认是否在当前服务范围内。', required: true, placeholder: '例如：杭州临平区' },
+    { id: 'renovation-stage', label: '装修或更换阶段', purpose: '判断客户是否接近选购、安装或改造决策。', required: true, placeholder: '例如：旧房翻新，准备下月施工' },
+    { id: 'bathroom-condition', label: '卫生间尺寸或现场情况', purpose: '确认坑距、空间、水电、排污或布局是否需要进一步判断。', required: true, inputKind: 'longText', placeholder: '例如：主卫约 2 平方米，想换马桶和浴室柜；已知坑距约 305mm' },
+    { id: 'target-product', label: '想看或想解决的问题', purpose: '匹配马桶、浴室柜、花洒、淋浴房或局部改造的后续动作。', required: true, inputKind: 'longText', placeholder: '例如：想确认智能马桶是否能装，预算包含安装' },
+    { id: 'contact-window', label: '可联系时间', purpose: '安排人工回复、到店或量尺沟通。', required: false, placeholder: '例如：工作日 19:00 后方便沟通' },
   ],
   qualificationRules: ['服务区域可覆盖，且客户愿意补充基本现场信息。', '存在明确产品、安装、改造、预算或时间窗口中的至少一项真实决策信号。', '不因为评论、点赞或只问泛价格就直接判定为有效预约。'],
   followUpSteps: [

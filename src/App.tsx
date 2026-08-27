@@ -32,7 +32,7 @@ import { BilibiliWorkspace, bilibiliSourceOptions, emptyBilibiliData, normalizeB
 import { IndustryRuleCatalog } from './industry-rule-catalog'
 import { industryRulePackById, industryRulePacks, normalizeIndustryPackId } from './industry-pack-registry'
 import { TacticPackCatalog } from './tactic-pack-catalog'
-import { growthTacticPackById, growthTacticPacks, type GrowthTacticPack } from './tactic-packs'
+import { growthTacticPackById, growthTacticPacks, normalizeTacticLeadValues, tacticLeadInputName, tacticLeadProgress, type GrowthTacticPack, type TacticLeadValues } from './tactic-packs'
 import { emptyTopicResearchData, normalizeTopicResearchData, TopicResearchPanel, type GeneratedTopicCandidate, type OpportunityChannelPerformance, type TopicResearchData } from './topic-research'
 import { ContentProductionPanel, emptyContentProductionData, normalizeContentProductionData, type ContentProductionData } from './content-production'
 import type { IndustryRulePack } from './industry-rules'
@@ -53,6 +53,8 @@ type CustomerRecord = {
   nextAction: string
   nextDate: string
   note: string
+  tacticPackId: string
+  tacticLeadValues: TacticLeadValues
   createdAt: string
 }
 
@@ -107,6 +109,24 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10)
 }
 
+function formText(formData: FormData, name: string, maxLength = 1000) {
+  return String(formData.get(name) || '').trim().slice(0, maxLength)
+}
+
+function tacticLeadValuesFromForm(formData: FormData, pack?: GrowthTacticPack) {
+  if (!pack) return {}
+  return pack.leadFields.reduce<TacticLeadValues>((values, field) => {
+    const value = formText(formData, tacticLeadInputName(field.id))
+    if (value) values[field.id] = value
+    return values
+  }, {})
+}
+
+function tacticNextAction(pack: GrowthTacticPack, values: TacticLeadValues) {
+  const progress = tacticLeadProgress(pack, values)
+  return pack.followUpSteps[progress.complete ? 1 : 0]?.action || ''
+}
+
 function loadData(): WorkspaceData {
   try {
     const saved = window.localStorage.getItem(STORAGE_KEY)
@@ -159,6 +179,8 @@ function loadData(): WorkspaceData {
         nextAction: record.nextAction || '',
         nextDate: record.nextDate || '',
         note: record.note || '',
+        tacticPackId: typeof record.tacticPackId === 'string' ? record.tacticPackId.slice(0, 200) : '',
+        tacticLeadValues: normalizeTacticLeadValues(record.tacticLeadValues),
         createdAt: record.createdAt || todayISO(),
       })),
       enabledChannels: normalizeEnabledChannels(parsed.enabledChannels, channelTasks, douyin, xiaohongshu, wechat, offline, referral, bilibili),
@@ -248,6 +270,7 @@ function App() {
   const [search, setSearch] = useState('')
   const [dialogStage, setDialogStage] = useState<Exclude<Stage, 'lost'> | null>(null)
   const [recordSourcePreset, setRecordSourcePreset] = useState('')
+  const [recordTacticPackId, setRecordTacticPackId] = useState('')
   const [editingRecord, setEditingRecord] = useState<CustomerRecord | null>(null)
   const [aiServiceOpen, setAIServiceOpen] = useState(false)
   const [creditAccountOpen, setCreditAccountOpen] = useState(false)
@@ -393,51 +416,64 @@ function App() {
 
   const showToast = (message: string) => setToast(message)
 
-  const openRecordDialog = (stage: Exclude<Stage, 'lost'>, source = '') => {
+  const openRecordDialog = (stage: Exclude<Stage, 'lost'>, source = '', channelId?: ChannelId) => {
     setRecordSourcePreset(source)
+    const tacticPack = activeTacticPack && activeTacticPack.channelId === channelId ? activeTacticPack : undefined
+    setRecordTacticPackId(tacticPack?.id || '')
     setDialogStage(stage)
   }
 
   const addRecord = (formData: FormData, initialStage: Exclude<Stage, 'lost'>) => {
     const stage = (formData.get('stage') as Exclude<Stage, 'lost'>) || initialStage
+    const tacticPack = growthTacticPackById(formData.get('tacticPackId'))
+    const tacticLeadValues = tacticLeadValuesFromForm(formData, tacticPack)
+    const nextAction = formText(formData, 'nextAction') || (tacticPack && stage === 'lead' ? tacticNextAction(tacticPack, tacticLeadValues) : '')
+    const nextDate = formText(formData, 'nextDate', 20) || (tacticPack && stage === 'lead' && nextAction ? todayISO() : '')
     const record: CustomerRecord = {
       id: `record-${Date.now()}`,
-      name: String(formData.get('name') || '').trim(),
-      contact: String(formData.get('contact') || '').trim(),
-      source: String(formData.get('source') || '').trim() || '未记录来源',
-      need: String(formData.get('need') || '').trim(),
+      name: formText(formData, 'name', 200),
+      contact: formText(formData, 'contact', 300),
+      source: formText(formData, 'source', 500) || '未记录来源',
+      need: formText(formData, 'need', 3000),
       stage,
       status: String(formData.get('status') || stageMeta[stage].statuses[0]) as RecordStatus,
-      owner: String(formData.get('owner') || '').trim(),
-      nextAction: String(formData.get('nextAction') || '').trim(),
-      nextDate: String(formData.get('nextDate') || ''),
-      note: String(formData.get('note') || '').trim(),
+      owner: formText(formData, 'owner', 200),
+      nextAction,
+      nextDate,
+      note: formText(formData, 'note', 3000),
+      tacticPackId: tacticPack?.id || '',
+      tacticLeadValues,
       createdAt: todayISO(),
     }
     if (!record.name) return
     setData((current) => ({ ...current, records: [record, ...current.records] }))
     setDialogStage(null)
     setRecordSourcePreset('')
+    setRecordTacticPackId('')
     showToast(`已加入${stageMeta[stage].label}`)
   }
 
   const updateRecord = (formData: FormData) => {
     if (!editingRecord) return
     const stage = String(formData.get('stage')) as Exclude<Stage, 'lost'>
+    const tacticPack = growthTacticPackById(formData.get('tacticPackId')) || growthTacticPackById(editingRecord.tacticPackId)
+    const tacticLeadValues = tacticPack ? tacticLeadValuesFromForm(formData, tacticPack) : editingRecord.tacticLeadValues
     setData((current) => ({
       ...current,
       records: current.records.map((record) => record.id === editingRecord.id ? {
         ...record,
-        name: String(formData.get('name') || '').trim(),
-        contact: String(formData.get('contact') || '').trim(),
-        source: String(formData.get('source') || '').trim() || '未记录来源',
-        need: String(formData.get('need') || '').trim(),
+        name: formText(formData, 'name', 200),
+        contact: formText(formData, 'contact', 300),
+        source: formText(formData, 'source', 500) || '未记录来源',
+        need: formText(formData, 'need', 3000),
         stage,
         status: String(formData.get('status') || stageMeta[stage].statuses[0]) as RecordStatus,
-        owner: String(formData.get('owner') || '').trim(),
-        nextAction: String(formData.get('nextAction') || '').trim(),
-        nextDate: String(formData.get('nextDate') || ''),
-        note: String(formData.get('note') || '').trim(),
+        owner: formText(formData, 'owner', 200),
+        nextAction: formText(formData, 'nextAction'),
+        nextDate: formText(formData, 'nextDate', 20),
+        note: formText(formData, 'note', 3000),
+        tacticPackId: tacticPack?.id || editingRecord.tacticPackId,
+        tacticLeadValues,
       } : record),
     }))
     setEditingRecord(null)
@@ -620,13 +656,13 @@ function App() {
     }
     if (view === 'acquisition' && activeChannelId) {
       const channel = channelById(activeChannelId)
-      if (channel.id === 'douyin') return <DouyinWorkspace data={data.douyin} records={data.records} onChange={(updater) => setData((current) => ({ ...current, douyin: updater(current.douyin) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source)} onToast={showToast} />
-      if (channel.id === 'xiaohongshu') return <XiaohongshuWorkspace data={data.xiaohongshu} records={data.records} onChange={(updater) => setData((current) => ({ ...current, xiaohongshu: updater(current.xiaohongshu) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source)} onToast={showToast} />
-      if (channel.id === 'wechat') return <WechatWorkspace data={data.wechat} records={data.records} onChange={(updater) => setData((current) => ({ ...current, wechat: updater(current.wechat) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source)} onToast={showToast} />
-      if (channel.id === 'offline') return <OfflineWorkspace data={data.offline} records={data.records} onChange={(updater) => setData((current) => ({ ...current, offline: updater(current.offline) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source)} onOpenRecord={(record) => setEditingRecord(data.records.find((item) => item.id === record.id) || null)} onToast={showToast} />
-      if (channel.id === 'referral') return <ReferralWorkspace data={data.referral} records={data.records} onChange={(updater) => setData((current) => ({ ...current, referral: updater(current.referral) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source)} onOpenRecord={(record) => setEditingRecord(data.records.find((item) => item.id === record.id) || null)} onToast={showToast} />
-      if (channel.id === 'bilibili') return <BilibiliWorkspace data={data.bilibili} records={data.records} onChange={(updater) => setData((current) => ({ ...current, bilibili: updater(current.bilibili) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source)} onToast={showToast} />
-      return <ChannelWorkspacePage channel={channel} tasks={data.channelTasks.filter((task) => task.channelId === channel.id)} records={data.records} onBack={() => setActiveChannelId(null)} onAddTask={() => setTaskChannelId(channel.id)} onEditTask={setEditingTask} onAdvanceTask={advanceChannelTask} onAddLead={() => openRecordDialog('lead')} />
+      if (channel.id === 'douyin') return <DouyinWorkspace data={data.douyin} records={data.records} onChange={(updater) => setData((current) => ({ ...current, douyin: updater(current.douyin) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source, channel.id)} onToast={showToast} />
+      if (channel.id === 'xiaohongshu') return <XiaohongshuWorkspace data={data.xiaohongshu} records={data.records} onChange={(updater) => setData((current) => ({ ...current, xiaohongshu: updater(current.xiaohongshu) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source, channel.id)} onToast={showToast} />
+      if (channel.id === 'wechat') return <WechatWorkspace data={data.wechat} records={data.records} onChange={(updater) => setData((current) => ({ ...current, wechat: updater(current.wechat) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source, channel.id)} onToast={showToast} />
+      if (channel.id === 'offline') return <OfflineWorkspace data={data.offline} records={data.records} onChange={(updater) => setData((current) => ({ ...current, offline: updater(current.offline) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source, channel.id)} onOpenRecord={(record) => setEditingRecord(data.records.find((item) => item.id === record.id) || null)} onToast={showToast} />
+      if (channel.id === 'referral') return <ReferralWorkspace data={data.referral} records={data.records} onChange={(updater) => setData((current) => ({ ...current, referral: updater(current.referral) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source, channel.id)} onOpenRecord={(record) => setEditingRecord(data.records.find((item) => item.id === record.id) || null)} onToast={showToast} />
+      if (channel.id === 'bilibili') return <BilibiliWorkspace data={data.bilibili} records={data.records} onChange={(updater) => setData((current) => ({ ...current, bilibili: updater(current.bilibili) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source, channel.id)} onToast={showToast} />
+      return <ChannelWorkspacePage channel={channel} tasks={data.channelTasks.filter((task) => task.channelId === channel.id)} records={data.records} onBack={() => setActiveChannelId(null)} onAddTask={() => setTaskChannelId(channel.id)} onEditTask={setEditingTask} onAdvanceTask={advanceChannelTask} onAddLead={() => openRecordDialog('lead', '', channel.id)} />
     }
     if (view === 'acquisition') return <AcquisitionPage topicResearch={data.topicResearch} contentProduction={data.contentProduction} industryPack={activeIndustryPack} activeIndustryPackId={data.activeIndustryPackId} tacticPack={activeTacticPack} activeTacticPackId={data.activeTacticPackId} aiSettings={aiSettings} aiSecrets={aiSecrets} enabledChannels={data.enabledChannels} performanceByOpportunity={opportunityPerformance} onTopicResearchChange={(updater) => setData((current) => ({ ...current, topicResearch: updater(current.topicResearch) }))} onContentProductionChange={(updater) => setData((current) => ({ ...current, contentProduction: updater(current.contentProduction) }))} onToast={showToast} onOpenAIService={() => setAIServiceOpen(true)} onOfficialUsage={(usage) => setCreditAccount((current) => current ? { ...current, balance: usage.balanceAfter, updatedAt: '' } : current)} onAdoptOpportunity={adoptResearchOpportunity} onActivateIndustryRules={activateIndustryRules} onActivateTacticPack={activateTacticPack} onEnableChannel={enableChannel} onOpenChannel={setActiveChannelId} />
     if (view === 'review') return <ReviewPage records={data.records} onNavigate={switchView} />
@@ -645,8 +681,8 @@ function App() {
       <header className="topbar"><button className="mobile-menu icon-button" type="button" onClick={() => setSidebarOpen(true)} aria-label="打开菜单"><Menu size={19} /></button><div className="breadcrumbs"><span>客户增长</span><ChevronRight size={14} /><strong>{activeChannelId ? channelById(activeChannelId).shortLabel : navItems.find((item) => item.id === view)?.label}</strong></div><div className="topbar-right">{aiSettings.mode === 'official' && <button className={`credit-account-button ${creditAccount ? 'loaded' : ''}`} type="button" onClick={() => setCreditAccountOpen(true)}><Coins size={15} /><span>{creditAccount ? `${new Intl.NumberFormat('zh-CN').format(creditAccount.balance)} 积分` : '积分账户'}</span></button>}<button className={`ai-service-button ${aiSettings.mode === 'official' && aiSecrets.officialTokenSaved || aiSettings.mode === 'custom' && aiSecrets.customApiKeySaved ? 'configured' : ''}`} type="button" onClick={() => setAIServiceOpen(true)}><Sparkles size={15} /><span>AI 服务</span></button><span className="save-state"><span></span>已自动保存</span></div></header>
       <div className="page-wrap" key={view}>{page}</div>
     </main>
-    {dialogStage && <RecordDialog stage={dialogStage} sourceOptions={activeSources} defaultSource={recordSourcePreset} onClose={() => { setDialogStage(null); setRecordSourcePreset('') }} onSubmit={(formData) => addRecord(formData, dialogStage)} />}
-    {editingRecord && <RecordDialog record={editingRecord} sourceOptions={activeSources} stage={editingRecord.stage === 'lost' ? 'lead' : editingRecord.stage} onClose={() => setEditingRecord(null)} onSubmit={updateRecord} />}
+    {dialogStage && <RecordDialog stage={dialogStage} sourceOptions={activeSources} defaultSource={recordSourcePreset} tacticPack={growthTacticPackById(recordTacticPackId)} onClose={() => { setDialogStage(null); setRecordSourcePreset(''); setRecordTacticPackId('') }} onSubmit={(formData) => addRecord(formData, dialogStage)} />}
+    {editingRecord && <RecordDialog record={editingRecord} sourceOptions={activeSources} stage={editingRecord.stage === 'lost' ? 'lead' : editingRecord.stage} tacticPack={growthTacticPackById(editingRecord.tacticPackId)} onClose={() => setEditingRecord(null)} onSubmit={updateRecord} />}
     {taskChannelId && <ChannelTaskDialog channel={channelById(taskChannelId)} onClose={() => setTaskChannelId(null)} onSubmit={(formData) => addChannelTask(formData, taskChannelId)} />}
     {editingTask && <ChannelTaskDialog channel={channelById(editingTask.channelId)} task={editingTask} onClose={() => setEditingTask(null)} onSubmit={updateChannelTask} />}
     {aiServiceOpen && <AIServiceDialog settings={aiSettings} secretStatus={aiSecrets} onClose={() => setAIServiceOpen(false)} onSave={(nextSettings, nextSecrets) => { setAISettings(nextSettings); setAISecrets(nextSecrets); setAIServiceOpen(false); showToast(nextSettings.mode === 'official' ? '官方 AI 服务已保存' : '自有 AI 服务已保存') }} onToast={showToast} />}
@@ -755,12 +791,14 @@ function ChannelTaskDialog({ channel, task, onClose, onSubmit }: { channel: Chan
   </div>
 }
 
-function RecordDialog({ stage, record, sourceOptions, defaultSource = '', onClose, onSubmit }: { stage: Exclude<Stage, 'lost'>; record?: CustomerRecord; sourceOptions: SourceOption[]; defaultSource?: string; onClose: () => void; onSubmit: (formData: FormData) => void }) {
+function RecordDialog({ stage, record, sourceOptions, defaultSource = '', tacticPack, onClose, onSubmit }: { stage: Exclude<Stage, 'lost'>; record?: CustomerRecord; sourceOptions: SourceOption[]; defaultSource?: string; tacticPack?: GrowthTacticPack; onClose: () => void; onSubmit: (formData: FormData) => void }) {
   const [selectedStage, setSelectedStage] = useState<Exclude<Stage, 'lost'>>(record?.stage === 'lost' ? stage : record?.stage ?? stage)
   const statuses = stageMeta[selectedStage].statuses
   const defaultStatus = record?.stage === selectedStage && statuses.includes(record.status) ? record.status : statuses[0]
   const title = record ? `编辑${stageMeta[selectedStage].label}` : `新建${stageMeta[stage].label}`
-  return <div className="dialog-backdrop" role="presentation"><form className="dialog" onSubmit={(event) => { event.preventDefault(); onSubmit(new FormData(event.currentTarget)) }}><div className="dialog-head"><div><h2>{title}</h2><p>把来源、联系方式、需求和下一步填写清楚，工作台才能帮你持续推进。</p></div><button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button></div><div className="form-grid"><label className="field"><span>姓名或称呼</span><input name="name" required autoFocus defaultValue={record?.name ?? ''} placeholder="例如：王女士 / 某公司负责人" /></label><label className="field"><span>联系方式</span><input name="contact" defaultValue={record?.contact ?? ''} placeholder="例如：手机号 / 微信备注名" /></label><label className="field field-wide"><span>来源</span><input name="source" list="channel-source-options" defaultValue={record?.source ?? defaultSource} placeholder="例如：扫码、电话、朋友介绍" /></label>{sourceOptions.length ? <datalist id="channel-source-options">{sourceOptions.map((source) => <option key={source.id} value={source.label} />)}</datalist> : null}<label className="field field-wide"><span>需求</span><textarea name="need" rows={3} defaultValue={record?.need ?? ''} placeholder="他想解决什么问题，是否有明确的购买或服务需求？" /></label><label className="field"><span>当前阶段</span><select name="stage" value={selectedStage} onChange={(event) => setSelectedStage(event.target.value as Exclude<Stage, 'lost'>)}>{(Object.keys(stageMeta) as Array<Exclude<Stage, 'lost'>>).map((item) => <option key={item} value={item}>{stageMeta[item].label}</option>)}</select></label><label className="field"><span>当前状态</span><select name="status" key={`${selectedStage}-${defaultStatus}`} defaultValue={defaultStatus}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label><label className="field"><span>负责人</span><input name="owner" defaultValue={record?.owner ?? ''} placeholder="例如：张店长" /></label><label className="field"><span>下一步日期</span><input name="nextDate" type="date" defaultValue={record?.nextDate ?? ''} /></label><label className="field field-wide"><span>下一步动作</span><input name="nextAction" defaultValue={record?.nextAction ?? ''} placeholder="例如：明天电话确认到店时间" /></label><label className="field field-wide"><span>备注</span><textarea name="note" rows={2} defaultValue={record?.note ?? ''} placeholder="可选，记录需要留意的事情" /></label></div><div className="dialog-foot"><button className="button button-secondary" type="button" onClick={onClose}>取消</button><button className="button button-primary" type="submit">保存<Check size={16} /></button></div></form></div>
+  const tacticValues = record?.tacticLeadValues || {}
+  const tacticProgress = tacticPack ? tacticLeadProgress(tacticPack, tacticValues) : null
+  return <div className="dialog-backdrop" role="presentation"><form className="dialog" onSubmit={(event) => { event.preventDefault(); onSubmit(new FormData(event.currentTarget)) }}><div className="dialog-head"><div><h2>{title}</h2><p>把来源、联系方式、需求和下一步填写清楚，工作台才能帮你持续推进。</p></div><button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button></div><div className="form-grid"><label className="field"><span>姓名或称呼</span><input name="name" required autoFocus defaultValue={record?.name ?? ''} placeholder="例如：王女士 / 某公司负责人" /></label><label className="field"><span>联系方式</span><input name="contact" defaultValue={record?.contact ?? ''} placeholder="例如：手机号 / 微信备注名" /></label><label className="field field-wide"><span>来源</span><input name="source" list="channel-source-options" defaultValue={record?.source ?? defaultSource} placeholder="例如：扫码、电话、朋友介绍" /></label>{sourceOptions.length ? <datalist id="channel-source-options">{sourceOptions.map((source) => <option key={source.id} value={source.label} />)}</datalist> : null}<label className="field field-wide"><span>需求</span><textarea name="need" rows={3} defaultValue={record?.need ?? ''} placeholder="他想解决什么问题，是否有明确的购买或服务需求？" /></label>{tacticPack ? <fieldset className="tactic-lead-intake"><input type="hidden" name="tacticPackId" value={tacticPack.id} /><legend>按当前获客路径补充信息</legend><p><strong>{tacticPack.name}</strong>{tacticProgress?.complete ? '：关键信息已补全，仍需由人工确认适配和下一步。' : '：先补齐关键现场信息，再判断是否值得继续推进。'}</p><div className="form-grid tactic-lead-grid">{tacticPack.leadFields.map((field) => <label key={field.id} className={`field ${field.inputKind === 'longText' ? 'field-wide' : ''}`}><span>{field.label}{field.required ? <em>需要确认</em> : null}</span><small>{field.purpose}</small>{field.inputKind === 'longText' ? <textarea name={tacticLeadInputName(field.id)} rows={3} defaultValue={tacticValues[field.id] || ''} placeholder={field.placeholder || '补充客户提供的实际情况'} /> : <input name={tacticLeadInputName(field.id)} defaultValue={tacticValues[field.id] || ''} placeholder={field.placeholder || '补充客户提供的实际情况'} />}</label>)}</div><small className="tactic-lead-intake-note">{tacticProgress?.complete ? `已补全 ${tacticProgress.completedCount}/${tacticProgress.requiredCount} 项关键信息。` : `当前已补全 ${tacticProgress?.completedCount || 0}/${tacticProgress?.requiredCount || 0} 项关键信息；未补全前保留为待判断，不把咨询当成有效预约。`}</small></fieldset> : <input type="hidden" name="tacticPackId" value="" />}<label className="field"><span>当前阶段</span><select name="stage" value={selectedStage} onChange={(event) => setSelectedStage(event.target.value as Exclude<Stage, 'lost'>)}>{(Object.keys(stageMeta) as Array<Exclude<Stage, 'lost'>>).map((item) => <option key={item} value={item}>{stageMeta[item].label}</option>)}</select></label><label className="field"><span>当前状态</span><select name="status" key={`${selectedStage}-${defaultStatus}`} defaultValue={defaultStatus}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label><label className="field"><span>负责人</span><input name="owner" defaultValue={record?.owner ?? ''} placeholder="例如：张店长" /></label><label className="field"><span>下一步日期</span><input name="nextDate" type="date" defaultValue={record?.nextDate ?? ''} /></label><label className="field field-wide"><span>下一步动作</span><input name="nextAction" defaultValue={record?.nextAction ?? ''} placeholder={tacticPack?.followUpSteps[0]?.action || '例如：明天电话确认到店时间'} /></label><label className="field field-wide"><span>备注</span><textarea name="note" rows={2} defaultValue={record?.note ?? ''} placeholder="可选，记录需要留意的事情" /></label></div><div className="dialog-foot"><button className="button button-secondary" type="button" onClick={onClose}>取消</button><button className="button button-primary" type="submit">保存<Check size={16} /></button></div></form></div>
 }
 
 function PageHeader({ title, description, action }: { title: string; description: string; action?: ReactNode }) { return <header className="page-header"><div><h1>{title}</h1><p>{description}</p></div>{action && <div className="page-action">{action}</div>}</header> }

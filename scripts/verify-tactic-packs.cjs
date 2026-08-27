@@ -35,6 +35,15 @@ try {
     assert.ok(pack.reviewMetrics.length >= 4, `${pack.name}必须定义可回收的复盘指标`)
     assert.ok(pack.boundaries.some((item) => item.includes('不自动')), `${pack.name}必须禁止自动私信、预约或群发`)
     assert.deepEqual(tactics.growthTacticPackPayload(pack)?.id, pack.id, `${pack.name}必须可作为 AI 请求中的结构化数据`) 
+
+    const blankProgress = tactics.tacticLeadProgress(pack, {})
+    assert.equal(blankProgress.complete, false, `${pack.name}缺少必填信息时不能判定为信息完整`)
+    assert.equal(blankProgress.completedCount, 0, `${pack.name}空线索不能拥有已补全字段`)
+    const completeValues = Object.fromEntries(pack.leadFields.filter((field) => field.required).map((field) => [field.id, '已提供']))
+    const completeProgress = tactics.tacticLeadProgress(pack, completeValues)
+    assert.equal(completeProgress.complete, true, `${pack.name}补全必填信息后必须可以进入下一步判断`)
+    assert.equal(completeProgress.completedCount, completeProgress.requiredCount, `${pack.name}完整线索的字段计数必须正确`)
+    assert.equal(tactics.tacticLeadInputName(pack.leadFields[0].id), `tactic-lead-${pack.leadFields[0].id}`, `${pack.name}字段必须有稳定的表单名称`)
   }
 
   console.log(`打法包测试通过：${packs.map((pack) => pack.name).join('、')}`)
