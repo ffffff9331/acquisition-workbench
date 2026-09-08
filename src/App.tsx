@@ -37,10 +37,14 @@ import { DeliveryConfigurationPanel } from './delivery-configuration-panel'
 import { createDeliveryConfigurationPlan, type DeliveryConfigurationSelection } from './delivery-configuration'
 import { verifyDeliveryPackArtifact, type VerifiedDeliveryPack } from './delivery-pack-auth'
 import { growthTacticPackById, growthTacticPacks, normalizeTacticLeadValues, normalizeTacticQualificationStatus, tacticLeadInputName, tacticLeadProgress, tacticQualificationRecommendation, type GrowthTacticPack, type TacticLeadValues, type TacticQualificationStatus } from './tactic-packs'
-import { customerStageEventByType, customerStageEventDefinitions, normalizeCustomerStageEvents, type CustomerStageEvent } from './customer-events'
+import { customerStageEventByType, customerStageEventDefinitions, firstManualResponseEventType, normalizeCustomerStageEvents, ownershipHandoffEventType, type CustomerStageEvent } from './customer-events'
 import { tacticReviewRows } from './tactic-review'
 import { emptyTopicResearchData, normalizeTopicResearchData, TopicResearchPanel, type GeneratedTopicCandidate, type OpportunityChannelPerformance, type TopicResearchData } from './topic-research'
-import { ContentProductionPanel, emptyContentProductionData, normalizeContentProductionData, type ContentProductionData } from './content-production'
+import { ContentProductionPanel, contentLeadContextForExecution, emptyContentProductionData, normalizeContentProductionData, type ContentLeadContext, type ContentProductionData } from './content-production'
+import { contentLeadContextForUpdatedRecord } from './lead-content-context'
+import { leadWorkQueue } from './lead-work-queue'
+import { firstResponseDeadline, firstResponseSlaLabel, firstResponseSlaStatus, normalizeFirstResponseTarget, nowLocalDateTime } from './lead-response-sla'
+import { trafficCampaignQueue } from './traffic-campaign-queue'
 import type { IndustryRulePack } from './industry-rules'
 
 type View = 'workspace' | 'acquisition' | 'leads' | 'intents' | 'customers' | 'review'
@@ -64,6 +68,9 @@ type CustomerRecord = {
   tacticQualificationStatus: TacticQualificationStatus
   tacticQualificationNote: string
   tacticQualifiedAt: string
+  contentLeadContext: ContentLeadContext | null
+  intakeAt: string
+  firstResponseDueAt: string
   createdAt: string
 }
 
@@ -93,6 +100,7 @@ type ChannelTask = {
 }
 
 type SourceOption = { id: string; label: string }
+type ContentLeadSourceOption = { source: string; sourceCode: string; context: ContentLeadContext }
 
 type WorkspaceData = { records: CustomerRecord[]; events: CustomerStageEvent[]; enabledChannels: ChannelId[]; installedIndustryPacks: string[]; activeIndustryPackId: string; installedTacticPacks: string[]; activeTacticPackId: string; deliveryPackArtifacts: string[]; installationId: string; channelTasks: ChannelTask[]; topicResearch: TopicResearchData; contentProduction: ContentProductionData; douyin: DouyinData; xiaohongshu: XiaohongshuData; wechat: WechatData; offline: OfflineData; referral: ReferralData; bilibili: BilibiliData }
 
@@ -115,7 +123,7 @@ const stageMeta: Record<Exclude<Stage, 'lost'>, { label: string; statuses: Recor
 }
 
 function todayISO() {
-  return new Date().toISOString().slice(0, 10)
+  return nowLocalDateTime().slice(0, 10)
 }
 
 function createInstallationId() {
@@ -130,6 +138,39 @@ function normalizeInstallationId(value: unknown) {
 
 function formText(formData: FormData, name: string, maxLength = 1000) {
   return String(formData.get(name) || '').trim().slice(0, maxLength)
+}
+
+function cleanText(value: unknown, maxLength: number) {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : ''
+}
+
+function normalizeContentLeadContext(value: unknown): ContentLeadContext | null {
+  if (!value || typeof value !== 'object') return null
+  const item = value as Partial<ContentLeadContext>
+  const channelId = channelDefinitions.some((channel) => channel.id === item.channelId) ? item.channelId as ChannelId : null
+  const contentTaskId = cleanText(item.contentTaskId, 120)
+  const variantId = cleanText(item.variantId, 120)
+  if (!channelId || !contentTaskId || !variantId) return null
+  return {
+    contentTaskId,
+    variantId,
+    channelId,
+    title: cleanText(item.title, 200),
+    customerPromise: cleanText(item.customerPromise, 600),
+    customerNextAction: cleanText(item.customerNextAction, 1000),
+    inquiryOwner: cleanText(item.inquiryOwner, 120),
+    firstResponseTarget: normalizeFirstResponseTarget(item.firstResponseTarget),
+    inquiryEntry: cleanText(item.inquiryEntry, 300),
+    firstResponsePlan: cleanText(item.firstResponsePlan, 800),
+    customerPreparation: cleanText(item.customerPreparation, 800),
+    serviceBoundary: cleanText(item.serviceBoundary, 800),
+    lockedAt: cleanText(item.lockedAt, 60),
+  }
+}
+
+function sourceCodeFromLabel(value: string) {
+  const parts = value.split(' · ')
+  return cleanText(parts[parts.length - 1], 120)
 }
 
 function tacticLeadValuesFromForm(formData: FormData, pack?: GrowthTacticPack) {
@@ -232,6 +273,9 @@ function loadData(): WorkspaceData {
         tacticQualificationStatus: normalizeTacticQualificationStatus(record.tacticQualificationStatus),
         tacticQualificationNote: typeof record.tacticQualificationNote === 'string' ? record.tacticQualificationNote.slice(0, 3000) : '',
         tacticQualifiedAt: typeof record.tacticQualifiedAt === 'string' ? record.tacticQualifiedAt.slice(0, 20) : '',
+        contentLeadContext: normalizeContentLeadContext(record.contentLeadContext),
+        intakeAt: typeof record.intakeAt === 'string' ? record.intakeAt.slice(0, 20) : '',
+        firstResponseDueAt: typeof record.firstResponseDueAt === 'string' ? record.firstResponseDueAt.slice(0, 20) : '',
         createdAt: record.createdAt || todayISO(),
       })),
       events,
@@ -259,9 +303,9 @@ function loadData(): WorkspaceData {
 
 function formatDate(value: string) {
   if (!value) return '未安排'
-  const date = new Date(`${value}T00:00:00`)
+  const date = new Date(value.includes('T') ? value : `${value}T00:00:00`)
   if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(date)
+  return new Intl.DateTimeFormat('zh-CN', value.includes('T') ? { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' } : { month: 'numeric', day: 'numeric' }).format(date)
 }
 
 function stageForView(view: View): Exclude<Stage, 'lost'> | null {
@@ -332,6 +376,8 @@ function App() {
   const [editingRecord, setEditingRecord] = useState<CustomerRecord | null>(null)
   const [intentConfirmationRecord, setIntentConfirmationRecord] = useState<CustomerRecord | null>(null)
   const [eventRecord, setEventRecord] = useState<CustomerRecord | null>(null)
+  const [eventTypePreset, setEventTypePreset] = useState<CustomerStageEvent['type'] | undefined>(undefined)
+  const [handoffRecord, setHandoffRecord] = useState<CustomerRecord | null>(null)
   const [aiServiceOpen, setAIServiceOpen] = useState(false)
   const [creditAccountOpen, setCreditAccountOpen] = useState(false)
   const [creditAccount, setCreditAccount] = useState<CreditAccountSnapshot | null>(null)
@@ -479,6 +525,12 @@ function App() {
           const sources = records.filter((record) => record.status === '已结束' || record.status === '进行中').map((record) => record.sourceCode)
           return { channelId: adoption.channelId, itemId: adoption.itemId, stage: records[0]?.status || task?.status || '活动待确认', executed: records.some((record) => record.status === '已结束' || record.status === '进行中'), reach: metrics.reduce((sum, metric) => sum + metric.attendees, 0), interactions: metrics.reduce((sum, metric) => sum + metric.registrations + metric.appointments, 0), platformInquiries: metrics.reduce((sum, metric) => sum + metric.inquiries, 0), ...recordSummary(sources) }
         }
+        if (adoption.channelId === 'referral') {
+          const relation = data.referral.relations.find((item) => item.id === adoption.itemId)
+          const sources = relation?.sourceCode ? [relation.sourceCode] : []
+          const received = relation ? data.referral.logs.some((log) => log.relationId === relation.id && log.type === '收到推荐') : false
+          return { channelId: adoption.channelId, itemId: adoption.itemId, stage: relation?.status || '推荐关系待确认', executed: received, reach: 0, interactions: 0, platformInquiries: 0, ...recordSummary(sources) }
+        }
         return { channelId: adoption.channelId, itemId: adoption.itemId, stage: '等待建立推荐关系', executed: false, reach: 0, interactions: 0, platformInquiries: 0, registeredLeads: 0, qualifiedLeads: 0, customers: 0 }
       })
     })
@@ -493,6 +545,41 @@ function App() {
     ...referralSourceOptions(data.referral),
     ...bilibiliSourceOptions(data.bilibili),
   ]
+
+  const contentExecutionForSourceCode = (sourceCode: string): { channelId: ChannelId; executionItemId: string } | null => {
+    const douyinRecord = data.douyin.publishRecords.find((record) => record.sourceCode === sourceCode)
+    if (douyinRecord) {
+      const task = data.douyin.videoTasks.find((item) => item.id === douyinRecord.videoTaskId)
+      if (task?.ideaId) return { channelId: 'douyin', executionItemId: task.ideaId }
+    }
+    const xiaohongshuRecord = data.xiaohongshu.publishRecords.find((record) => record.sourceCode === sourceCode)
+    if (xiaohongshuRecord) {
+      const task = data.xiaohongshu.noteTasks.find((item) => item.id === xiaohongshuRecord.noteTaskId)
+      if (task?.ideaId) return { channelId: 'xiaohongshu', executionItemId: task.ideaId }
+    }
+    const wechatRecord = data.wechat.executionRecords.find((record) => record.sourceCode === sourceCode)
+    if (wechatRecord?.taskId) return { channelId: 'wechat', executionItemId: wechatRecord.taskId }
+    const offlineRecord = data.offline.runRecords.find((record) => record.sourceCode === sourceCode)
+    if (offlineRecord?.taskId) return { channelId: 'offline', executionItemId: offlineRecord.taskId }
+    const bilibiliRecord = data.bilibili.publishRecords.find((record) => record.sourceCode === sourceCode)
+    if (bilibiliRecord) {
+      const task = data.bilibili.videoTasks.find((item) => item.id === bilibiliRecord.videoTaskId)
+      if (task?.ideaId) return { channelId: 'bilibili', executionItemId: task.ideaId }
+    }
+    return null
+  }
+
+  const contentLeadSourceOptions: ContentLeadSourceOption[] = activeSources.flatMap((source) => {
+    const sourceCode = sourceCodeFromLabel(source.label)
+    const execution = contentExecutionForSourceCode(sourceCode)
+    const context = execution ? contentLeadContextForExecution(data.contentProduction, execution.channelId, execution.executionItemId) : null
+    return context ? [{ source: source.label, sourceCode, context }] : []
+  })
+
+  const contentLeadContextForSource = (source: string) => {
+    const matched = contentLeadSourceOptions.find((option) => option.source === source || option.sourceCode === source)
+    return matched?.context || null
+  }
 
   const showToast = (message: string) => setToast(message)
 
@@ -514,17 +601,21 @@ function App() {
       showToast('请先补全关键信息，并由人工确认可以推进后再转入意向客户')
       return
     }
-    const nextAction = formText(formData, 'nextAction') || (tacticPack && stage === 'lead' ? tacticNextAction(tacticPack, tacticLeadValues) : '')
-    const nextDate = formText(formData, 'nextDate', 20) || (tacticPack && stage === 'lead' && nextAction ? todayISO() : '')
+    const source = formText(formData, 'source', 500) || '未记录来源'
+    const contentLeadContext = contentLeadContextForSource(source)
+    const nextAction = formText(formData, 'nextAction') || (stage === 'lead' ? contentLeadContext?.firstResponsePlan || (tacticPack ? tacticNextAction(tacticPack, tacticLeadValues) : '') : '')
+    const nextDate = formText(formData, 'nextDate', 20) || (stage === 'lead' && nextAction ? todayISO() : '')
+    const owner = formText(formData, 'owner', 200) || contentLeadContext?.inquiryOwner || ''
+    const intakeAt = nowLocalDateTime()
     const record: CustomerRecord = {
       id: `record-${Date.now()}`,
       name: formText(formData, 'name', 200),
       contact: formText(formData, 'contact', 300),
-      source: formText(formData, 'source', 500) || '未记录来源',
+      source,
       need: formText(formData, 'need', 3000),
       stage,
-      status: String(formData.get('status') || stageMeta[stage].statuses[0]) as RecordStatus,
-      owner: formText(formData, 'owner', 200),
+      status: String(formData.get('status') || (stage === 'lead' && contentLeadContext ? '待联系' : stageMeta[stage].statuses[0])) as RecordStatus,
+      owner,
       nextAction,
       nextDate,
       note: formText(formData, 'note', 3000),
@@ -533,6 +624,9 @@ function App() {
       tacticQualificationStatus,
       tacticQualificationNote,
       tacticQualifiedAt: tacticQualificationStatus ? todayISO() : '',
+      contentLeadContext,
+      intakeAt,
+      firstResponseDueAt: contentLeadContext ? firstResponseDeadline(intakeAt, contentLeadContext.firstResponseTarget) : '',
       createdAt: todayISO(),
     }
     if (!record.name) return
@@ -551,21 +645,26 @@ function App() {
     const tacticQualificationStatus = tacticPack ? normalizeTacticQualificationStatus(formData.get('tacticQualificationStatus')) : editingRecord.tacticQualificationStatus
     const tacticQualificationNote = tacticPack ? formText(formData, 'tacticQualificationNote', 3000) : editingRecord.tacticQualificationNote
     const qualificationRecommendation = tacticPack ? tacticQualificationRecommendation(tacticPack, tacticLeadValues) : null
+    const source = formText(formData, 'source', 500) || '未记录来源'
     if (tacticPack && editingRecord.stage === 'lead' && stage === 'intent' && (qualificationRecommendation?.status !== '可人工推进' || tacticQualificationStatus !== '可人工推进')) {
       showToast('请先补全关键信息，并由人工确认可以推进后再转入意向客户')
       return
     }
+    const nextContentLeadContext = contentLeadContextForUpdatedRecord(editingRecord.source, source, editingRecord.contentLeadContext, contentLeadContextForSource(source))
+    const owner = formText(formData, 'owner', 200) || editingRecord.owner || nextContentLeadContext?.inquiryOwner || ''
+    const intakeAt = editingRecord.intakeAt || nowLocalDateTime()
+    const firstResponseDueAt = editingRecord.firstResponseDueAt || (nextContentLeadContext ? firstResponseDeadline(intakeAt, nextContentLeadContext.firstResponseTarget) : '')
     setData((current) => ({
       ...current,
       records: current.records.map((record) => record.id === editingRecord.id ? {
         ...record,
         name: formText(formData, 'name', 200),
         contact: formText(formData, 'contact', 300),
-        source: formText(formData, 'source', 500) || '未记录来源',
+        source,
         need: formText(formData, 'need', 3000),
         stage,
         status: String(formData.get('status') || stageMeta[stage].statuses[0]) as RecordStatus,
-        owner: formText(formData, 'owner', 200),
+        owner,
         nextAction: formText(formData, 'nextAction'),
         nextDate: formText(formData, 'nextDate', 20),
         note: formText(formData, 'note', 3000),
@@ -574,6 +673,9 @@ function App() {
         tacticQualificationStatus,
         tacticQualificationNote,
         tacticQualifiedAt: tacticQualificationStatus ? record.tacticQualifiedAt || todayISO() : '',
+        contentLeadContext: nextContentLeadContext,
+        intakeAt,
+        firstResponseDueAt,
       } : record),
     }))
     setEditingRecord(null)
@@ -623,6 +725,11 @@ function App() {
     showToast('已标记为暂不跟进')
   }
 
+  const openCustomerStageEvent = (record: CustomerRecord, type?: CustomerStageEvent['type']) => {
+    setEventTypePreset(type)
+    setEventRecord(record)
+  }
+
   const setNextActionDone = (record: CustomerRecord) => {
     const nextDate = new Date()
     nextDate.setDate(nextDate.getDate() + 14)
@@ -647,7 +754,12 @@ function App() {
       showToast('请先补全信息并完成人工判断，再记录会推进客户阶段的事项')
       return
     }
-    const event = createCustomerStageEvent(eventRecord.id, definition.type, formText(formData, 'occurredAt', 20) || todayISO(), formText(formData, 'note', 3000))
+    const note = formText(formData, 'note', 3000)
+    if (definition.type === firstManualResponseEventType && !note) {
+      showToast('请记录已确认的信息、待补资料或明确的下一步')
+      return
+    }
+    const event = createCustomerStageEvent(eventRecord.id, definition.type, formText(formData, 'occurredAt', 20) || (definition.type === firstManualResponseEventType ? nowLocalDateTime() : todayISO()), note)
     setData((current) => ({
       ...current,
       events: [event, ...current.events],
@@ -659,7 +771,37 @@ function App() {
       } : record),
     }))
     setEventRecord(null)
+    setEventTypePreset(undefined)
     showToast(`${definition.type}已记录`)
+  }
+
+  const handoffLead = (formData: FormData) => {
+    if (!handoffRecord) return
+    const nextOwner = formText(formData, 'nextOwner', 200)
+    const note = formText(formData, 'note', 3000)
+    if (!nextOwner) {
+      showToast('请填写新的承接负责人')
+      return
+    }
+    if (!note) {
+      showToast('请说明交接原因、已完成内容或下一步')
+      return
+    }
+    const occurredAt = formText(formData, 'occurredAt', 20) || nowLocalDateTime()
+    const previousOwner = handoffRecord.owner || handoffRecord.contentLeadContext?.inquiryOwner || '未分配负责人'
+    const event = createCustomerStageEvent(
+      handoffRecord.id,
+      ownershipHandoffEventType,
+      occurredAt,
+      `由 ${previousOwner} 交接给 ${nextOwner}。${note}`,
+    )
+    setData((current) => ({
+      ...current,
+      events: [event, ...current.events],
+      records: current.records.map((record) => record.id === handoffRecord.id ? { ...record, owner: nextOwner } : record),
+    }))
+    setHandoffRecord(null)
+    showToast(`已交接给${nextOwner}`)
   }
 
   const activateIndustryRules = (packId: string) => {
@@ -723,6 +865,7 @@ function App() {
   const adoptResearchOpportunity = (opportunity: GeneratedTopicCandidate, channelId: ChannelId) => {
     const createdAt = todayISO()
     const id = `research-${channelId}-${Date.now()}-${Math.floor(Math.random() * 900 + 100)}`
+    const tactic = growthTacticPackById(opportunity.tacticPackId)
     setData((current) => {
       const enabledChannels = current.enabledChannels.includes(channelId) ? current.enabledChannels : [...current.enabledChannels, channelId]
       if (channelId === 'douyin') {
@@ -740,9 +883,13 @@ function App() {
       if (channelId === 'offline') {
         return { ...current, enabledChannels, offline: { ...current.offline, tasks: [{ id, contentPackageId: opportunity.industryPackId, activityType: '到店活动', title: opportunity.title, goal: opportunity.callToAction, audience: opportunity.targetCustomer, location: current.topicResearch.brief.serviceArea, startAt: '', endAt: '', owner: current.offline.settings.defaultOwner, staffPlan: '', materialChecklist: opportunity.proofNeeded, onSiteProcess: opportunity.contentAngle, registrationMethod: opportunity.leadMagnet, callToAction: opportunity.callToAction, followUpPlan: '活动结束后 24 小时内联系已登记客户', status: '策划中', checklist: { scheduleReady: false, staffReady: false, materialsReady: false, processReady: false, registrationReady: false, followUpReady: false }, createdAt }, ...current.offline.tasks] } }
       }
+      if (channelId === 'referral') {
+        const relationType = tactic?.recommendedRelationType || '合作伙伴推荐'
+        return { ...current, enabledChannels, referral: { ...current.referral, relations: [{ id, contentPackageId: opportunity.industryPackId, relationType, name: opportunity.title, organization: '', contact: '', relationshipBasis: '来自需求雷达的战役准备，需由人工确认真实关系与介绍意愿。', referralScenario: opportunity.customerQuestion || opportunity.demandSignal, idealCustomer: opportunity.targetCustomer, cooperationValue: opportunity.keyPromise, introductionMessage: '', handoffMethod: opportunity.callToAction, feedbackPlan: '在客户本人同意的范围内人工反馈承接进展。', owner: current.referral.settings.defaultOwner, nextAction: '确认关系基础、介绍场景、客户同意与资料交接边界', nextDate: '', status: '待联系', checklist: { relationshipConfirmed: false, referralScenarioReady: false, idealCustomerReady: false, introductionReady: false, handoffReady: false, feedbackReady: false }, sourceCode: '', createdAt }, ...current.referral.relations] } }
+      }
       return { ...current, enabledChannels }
     })
-    showToast(channelId === 'referral' ? '已启用转介绍合作，请先建立具体推荐关系' : `已加入${channelById(channelId).shortLabel}，等待人工确认`)
+    showToast(channelId === 'referral' ? '已建立推荐关系准备，请先完成人工关系确认' : `已加入${channelById(channelId).shortLabel}，等待人工确认`)
     return id
   }
 
@@ -822,7 +969,7 @@ function App() {
 
   const page = (() => {
     if (view === 'workspace') {
-      return <WorkspacePage records={activeRecords} leads={leadCount} intents={intentCount} customers={customerCount} channelCount={enabledChannels.length} onAddLead={() => openRecordDialog('lead')} onOpenRecord={setEditingRecord} onNavigate={switchView} />
+      return <WorkspacePage records={activeRecords} events={data.events} topicResearch={data.topicResearch} performanceByOpportunity={opportunityPerformance} leads={leadCount} intents={intentCount} customers={customerCount} channelCount={enabledChannels.length} onAddLead={() => openRecordDialog('lead')} onOpenRecord={setEditingRecord} onAddEvent={openCustomerStageEvent} onNavigate={switchView} />
     }
     if (view === 'acquisition' && activeChannelId) {
       const channel = channelById(activeChannelId)
@@ -838,7 +985,7 @@ function App() {
     if (view === 'review') return <ReviewPage records={data.records} events={data.events} onNavigate={switchView} />
     const stage = stageForView(view)
     if (!stage) return null
-    return <LifecyclePage stage={stage} records={visibleRecords} sourceOptions={activeSources} search={search} onSearch={setSearch} onAdd={() => openRecordDialog(stage)} onEdit={setEditingRecord} onMove={moveRecord} onRequestTacticIntent={setIntentConfirmationRecord} onAddEvent={setEventRecord} onMarkLost={markLost} onCompleteAction={setNextActionDone} />
+    return <LifecyclePage stage={stage} records={visibleRecords} events={data.events} sourceOptions={activeSources} search={search} onSearch={setSearch} onAdd={() => openRecordDialog(stage)} onEdit={setEditingRecord} onMove={moveRecord} onRequestTacticIntent={setIntentConfirmationRecord} onAddEvent={openCustomerStageEvent} onMarkLost={markLost} onCompleteAction={setNextActionDone} />
   })()
 
   return <div className="app-shell">
@@ -851,10 +998,11 @@ function App() {
       <header className="topbar"><button className="mobile-menu icon-button" type="button" onClick={() => setSidebarOpen(true)} aria-label="打开菜单"><Menu size={19} /></button><div className="breadcrumbs"><span>客户增长</span><ChevronRight size={14} /><strong>{activeChannelId ? channelById(activeChannelId).shortLabel : navItems.find((item) => item.id === view)?.label}</strong></div><div className="topbar-right">{aiSettings.mode === 'official' && <button className={`credit-account-button ${creditAccount ? 'loaded' : ''}`} type="button" onClick={() => setCreditAccountOpen(true)}><Coins size={15} /><span>{creditAccount ? `${new Intl.NumberFormat('zh-CN').format(creditAccount.balance)} 积分` : '积分账户'}</span></button>}<button className={`ai-service-button ${aiSettings.mode === 'official' && aiSecrets.officialTokenSaved || aiSettings.mode === 'custom' && aiSecrets.customApiKeySaved ? 'configured' : ''}`} type="button" onClick={() => setAIServiceOpen(true)}><Sparkles size={15} /><span>AI 服务</span></button><span className="save-state"><span></span>已自动保存</span></div></header>
       <div className="page-wrap" key={view}>{page}</div>
     </main>
-    {dialogStage && <RecordDialog stage={dialogStage} sourceOptions={activeSources} defaultSource={recordSourcePreset} tacticPack={growthTacticPackById(recordTacticPackId)} onClose={() => { setDialogStage(null); setRecordSourcePreset(''); setRecordTacticPackId('') }} onSubmit={(formData) => addRecord(formData, dialogStage)} />}
-    {editingRecord && <RecordDialog record={editingRecord} stageEvents={data.events.filter((event) => event.recordId === editingRecord.id)} sourceOptions={activeSources} stage={editingRecord.stage === 'lost' ? 'lead' : editingRecord.stage} tacticPack={growthTacticPackById(editingRecord.tacticPackId)} onClose={() => setEditingRecord(null)} onSubmit={updateRecord} />}
+    {dialogStage && <RecordDialog stage={dialogStage} sourceOptions={activeSources} contentLeadSourceOptions={contentLeadSourceOptions} defaultSource={recordSourcePreset} tacticPack={growthTacticPackById(recordTacticPackId)} onClose={() => { setDialogStage(null); setRecordSourcePreset(''); setRecordTacticPackId('') }} onSubmit={(formData) => addRecord(formData, dialogStage)} />}
+    {editingRecord && <RecordDialog record={editingRecord} stageEvents={data.events.filter((event) => event.recordId === editingRecord.id)} sourceOptions={activeSources} contentLeadSourceOptions={contentLeadSourceOptions} stage={editingRecord.stage === 'lost' ? 'lead' : editingRecord.stage} tacticPack={growthTacticPackById(editingRecord.tacticPackId)} onClose={() => setEditingRecord(null)} onSubmit={updateRecord} onRecordFirstResponse={() => { openCustomerStageEvent(editingRecord, firstManualResponseEventType); setEditingRecord(null) }} onRequestHandoff={() => { setHandoffRecord(editingRecord); setEditingRecord(null) }} />}
     {intentConfirmationRecord && <TacticIntentConfirmationDialog record={intentConfirmationRecord} onClose={() => setIntentConfirmationRecord(null)} onEdit={() => { setIntentConfirmationRecord(null); setEditingRecord(intentConfirmationRecord) }} onConfirm={() => confirmTacticIntent(intentConfirmationRecord)} />}
-    {eventRecord && <CustomerStageEventDialog record={eventRecord} onClose={() => setEventRecord(null)} onSubmit={addCustomerStageEvent} />}
+    {eventRecord && <CustomerStageEventDialog record={eventRecord} initialType={eventTypePreset} onClose={() => { setEventRecord(null); setEventTypePreset(undefined) }} onSubmit={addCustomerStageEvent} />}
+    {handoffRecord && <OwnershipHandoffDialog record={handoffRecord} onClose={() => setHandoffRecord(null)} onSubmit={handoffLead} />}
     {taskChannelId && <ChannelTaskDialog channel={channelById(taskChannelId)} onClose={() => setTaskChannelId(null)} onSubmit={(formData) => addChannelTask(formData, taskChannelId)} />}
     {editingTask && <ChannelTaskDialog channel={channelById(editingTask.channelId)} task={editingTask} onClose={() => setEditingTask(null)} onSubmit={updateChannelTask} />}
     {aiServiceOpen && <AIServiceDialog settings={aiSettings} secretStatus={aiSecrets} onClose={() => setAIServiceOpen(false)} onSave={(nextSettings, nextSecrets) => { setAISettings(nextSettings); setAISecrets(nextSecrets); setAIServiceOpen(false); showToast(nextSettings.mode === 'official' ? '官方 AI 服务已保存' : '自有 AI 服务已保存') }} onToast={showToast} />}
@@ -863,12 +1011,16 @@ function App() {
   </div>
 }
 
-function WorkspacePage({ records, leads, intents, customers, channelCount, onAddLead, onOpenRecord, onNavigate }: { records: CustomerRecord[]; leads: number; intents: number; customers: number; channelCount: number; onAddLead: () => void; onOpenRecord: (record: CustomerRecord) => void; onNavigate: (view: View) => void }) {
-  const upcoming = [...records].filter((record) => record.nextAction || record.nextDate).sort((left, right) => (left.nextDate || '9999-12-31').localeCompare(right.nextDate || '9999-12-31')).slice(0, 5)
+export function WorkspacePage({ records, events, topicResearch, performanceByOpportunity, leads, intents, customers, channelCount, onAddLead, onOpenRecord, onAddEvent, onNavigate }: { records: CustomerRecord[]; events: CustomerStageEvent[]; topicResearch: TopicResearchData; performanceByOpportunity: Record<string, OpportunityChannelPerformance[]>; leads: number; intents: number; customers: number; channelCount: number; onAddLead: () => void; onOpenRecord: (record: CustomerRecord) => void; onAddEvent: (record: CustomerRecord, type?: CustomerStageEvent['type']) => void; onNavigate: (view: View) => void }) {
+  const queue = leadWorkQueue(records, events, nowLocalDateTime())
+  const queueItems = queue.items.slice(0, 6)
+  const campaignQueue = trafficCampaignQueue(topicResearch.generatedTopics, performanceByOpportunity, nowLocalDateTime())
+  const campaignItems = campaignQueue.items.slice(0, 5)
   return <>
-    <PageHeader title="今天，把下一步做清楚" description="从一条线索开始，持续推进到意向、成交和老客户经营。" action={<button className="button button-primary" onClick={onAddLead}><Plus size={16} />新建线索</button>} />
+    <PageHeader title="今天，把咨询先接住" description="先处理内容带来的新咨询和已到期的跟进，再推进意向、成交和老客户经营。" action={<button className="button button-primary" onClick={onAddLead}><Plus size={16} />新建线索</button>} />
     <section className="stage-overview" aria-label="当前客户阶段概览"><button onClick={() => onNavigate('leads')}><span>线索</span><strong>{leads}</strong><small>新进来的咨询</small><ArrowRight size={16} /></button><button onClick={() => onNavigate('intents')}><span>意向客户</span><strong>{intents}</strong><small>正在推进成交</small><ArrowRight size={16} /></button><button onClick={() => onNavigate('customers')}><span>客户</span><strong>{customers}</strong><small>服务与后续经营</small><ArrowRight size={16} /></button></section>
-    <section className="workspace-grid"><div className="work-panel"><div className="section-heading-row"><div><h2>下一步</h2><p>优先处理已安排日期的客户事项。</p></div><button className="text-button" onClick={() => onNavigate('intents')}>查看意向客户</button></div>{upcoming.length ? <div className="action-list">{upcoming.map((record) => <button className="action-row" key={record.id} onClick={() => onOpenRecord(record)}><span className={`stage-dot ${record.stage}`}></span><div><strong>{record.nextAction || '补充下一步动作'}</strong><span>{record.name} · {record.source}</span></div><time>{formatDate(record.nextDate)}</time><ChevronRight size={16} /></button>)}</div> : <EmptyState icon={<ClipboardList size={24} />} title="还没有待处理事项" description="新增线索时安排下一步，这里会自动形成今天的工作清单。" action={<button className="button button-secondary" onClick={onAddLead}><Plus size={15} />新建线索</button>} />}</div><aside className="work-panel quiet-panel"><div className="section-heading-row"><div><h2>客户进程</h2><p>每个人都只需要推进到下一步。</p></div></div><div className="flow-list"><FlowRow index="1" label="线索" count={leads} note="确认来源和需求" /><FlowRow index="2" label="意向客户" count={intents} note="预约、方案、报价" /><FlowRow index="3" label="客户" count={customers} note="服务、回访、复购" /></div></aside></section>
+    {campaignItems.length > 0 && <section className="work-panel traffic-campaign-queue-panel"><div className="section-heading-row"><div><h2>今日流量战役</h2><p>先确认哪些战役真的开始执行、哪些该回收结果并作出下一轮判断。</p></div><button className="text-button" onClick={() => onNavigate('acquisition')}>进入需求雷达</button></div><div className="traffic-campaign-queue-stats"><span><b>{campaignQueue.pendingStart}</b>待启动</span><span><b>{campaignQueue.preparing}</b>待人工开始</span><span><b>{campaignQueue.validating}</b>验证中</span><span className={campaignQueue.waitingReview ? 'risk' : ''}><b>{campaignQueue.waitingReview}</b>等待复盘</span></div><div className="traffic-campaign-queue-list">{campaignItems.map((item) => <button key={item.opportunity.id} type="button" onClick={() => onNavigate('acquisition')}><span className={`campaign-queue-state ${item.lifecycle.tone}`}>{item.lifecycle.label}</span><div><strong>{item.action}</strong><p>{item.opportunity.title}</p><small>{item.timing}</small></div><div className="campaign-queue-result"><span>{item.total.inquiries} 咨询</span><span>{item.total.leads} 线索</span><span>{item.total.qualifiedLeads} 有效</span><span>{item.total.customers} 成交</span></div><ChevronRight size={16} /></button>)}</div></section>}
+    <section className="workspace-grid"><div className="work-panel"><div className="section-heading-row"><div><h2>今日获客承接</h2><p>先接内容咨询，再处理承接超时、逾期和今天应完成的跟进。</p></div><button className="text-button" onClick={() => onNavigate('leads')}>查看全部线索</button></div><div className="lead-work-stats"><span><b>{queue.firstResponsePending}</b>待首次承接</span><span className={queue.firstResponseOverdue ? 'risk' : ''}><b>{queue.firstResponseOverdue}</b>承接已超时</span><span className={queue.firstResponseDueSoon ? 'risk' : ''}><b>{queue.firstResponseDueSoon}</b>即将超时</span><span className={queue.unassignedFirstResponses ? 'risk' : ''}><b>{queue.unassignedFirstResponses}</b>未分配承接</span><span><b>{queue.overdue}</b>已逾期</span><span><b>{queue.dueToday}</b>今天跟进</span></div>{queueItems.length ? <div className="lead-work-list">{queueItems.map((item) => <article className="lead-work-row" key={item.record.id}><button className="lead-work-main" onClick={() => onOpenRecord(item.record as CustomerRecord)}><span className={`stage-dot ${item.record.stage}`}></span><div><strong>{item.needsFirstResponse ? item.record.nextAction || '完成首次人工回应' : item.record.nextAction || '补充下一步动作'}</strong><span>{item.record.name} · {item.record.source || '未记录来源'} · {item.owner || '未分配承接人'}</span></div><time className={item.slaStatus === '已超时' || item.timing.startsWith('已逾期') ? 'overdue' : ''}>{item.timing}</time><ChevronRight size={16} /></button>{item.needsFirstResponse && <button className="button button-primary small lead-work-action" onClick={() => onAddEvent(item.record as CustomerRecord, firstManualResponseEventType)}>记录首次承接<ClipboardPlus size={14} /></button>}<span className={`lead-work-kind ${item.needsFirstResponse ? 'response' : item.kind === '逾期跟进' ? 'overdue' : ''}`}>{item.kind}</span></article>)}</div> : <EmptyState icon={<ClipboardList size={24} />} title="还没有待处理的承接事项" description="已发布内容带来的线索会在这里优先显示；其他客户的下一步也会按日期排进来。" action={<button className="button button-secondary" onClick={onAddLead}><Plus size={15} />新建线索</button>} />}</div><aside className="work-panel quiet-panel"><div className="section-heading-row"><div><h2>客户进程</h2><p>每个人都只需要推进到下一步。</p></div></div><div className="flow-list"><FlowRow index="1" label="线索" count={leads} note="确认来源和需求" /><FlowRow index="2" label="意向客户" count={intents} note="预约、方案、报价" /><FlowRow index="3" label="客户" count={customers} note="服务、回访、复购" /></div></aside></section>
     <section className="work-panel compact-panel"><div><h2>获客渠道</h2><p>{channelCount ? `当前已配置 ${channelCount} 个获客渠道。内容、活动和转介绍带来的结果会统一回到线索与复盘。` : '选择你准备做的获客渠道后，工作台会只保留对应的日常工作区。'}</p></div><button className="button button-secondary" onClick={() => onNavigate('acquisition')}>{channelCount ? '进入获客' : '选择渠道'}<ArrowRight size={16} /></button></section>
   </>
 }
@@ -912,16 +1064,24 @@ function ChannelWorkspacePage({ channel, tasks, records, onBack, onAddTask, onEd
   </>
 }
 
-function LifecyclePage({ stage, records, sourceOptions, search, onSearch, onAdd, onEdit, onMove, onRequestTacticIntent, onAddEvent, onMarkLost, onCompleteAction }: { stage: Exclude<Stage, 'lost'>; records: CustomerRecord[]; sourceOptions: SourceOption[]; search: string; onSearch: (value: string) => void; onAdd: () => void; onEdit: (record: CustomerRecord) => void; onMove: (id: string, stage: Exclude<Stage, 'lost'>) => void; onRequestTacticIntent: (record: CustomerRecord) => void; onAddEvent: (record: CustomerRecord) => void; onMarkLost: (id: string) => void; onCompleteAction: (record: CustomerRecord) => void }) {
+function LifecyclePage({ stage, records, events, sourceOptions, search, onSearch, onAdd, onEdit, onMove, onRequestTacticIntent, onAddEvent, onMarkLost, onCompleteAction }: { stage: Exclude<Stage, 'lost'>; records: CustomerRecord[]; events: CustomerStageEvent[]; sourceOptions: SourceOption[]; search: string; onSearch: (value: string) => void; onAdd: () => void; onEdit: (record: CustomerRecord) => void; onMove: (id: string, stage: Exclude<Stage, 'lost'>) => void; onRequestTacticIntent: (record: CustomerRecord) => void; onAddEvent: (record: CustomerRecord, type?: CustomerStageEvent['type']) => void; onMarkLost: (id: string) => void; onCompleteAction: (record: CustomerRecord) => void }) {
   const copy = { lead: { title: '线索', description: '记录新进来的咨询，先确认来源、需求和是否值得继续投入。', action: '新建线索', empty: '还没有线索', helper: '新的私信、扫码、电话、到店和转介绍都可以从这里开始。' }, intent: { title: '意向客户', description: '把确认值得推进的人放在这里，安排联系、预约、方案和报价。', action: '新建意向客户', empty: '还没有意向客户', helper: '线索确认有明确需求后，可以转入这里持续推进。' }, customer: { title: '客户', description: '成交后继续记录服务、回访和下一次可能的复购或转介绍。', action: '新建客户', empty: '还没有客户', helper: '意向客户成交后，会自动进入这里。' } }[stage]
   const statusCounts = stageMeta[stage].statuses.map((status) => ({ status, count: records.filter((record) => record.status === status).length })).filter((item) => item.count > 0)
+  const firstResponseByRecord = new Map(events.filter((event) => event.type === firstManualResponseEventType).map((event) => [event.recordId, event]))
+  const lifecycleNow = nowLocalDateTime()
+  const contentSourceRecords = records.filter((record) => Boolean(record.contentLeadContext))
+  const respondedContentLeadCount = contentSourceRecords.filter((record) => firstResponseByRecord.has(record.id)).length
   return <>
     <PageHeader title={copy.title} description={copy.description} action={<button className="button button-primary" onClick={onAdd}><Plus size={16} />{copy.action}</button>} />
-    <section className="list-summary"><div><strong>{records.length}</strong><span>当前{copy.title}</span></div>{statusCounts.map((item) => <div key={item.status}><strong>{item.count}</strong><span>{item.status}</span></div>)}<p>{sourceOptions.length ? `${copy.helper} 已有 ${sourceOptions.length} 条已执行的渠道来源可供关联。` : copy.helper}</p></section>
+    <section className="list-summary"><div><strong>{records.length}</strong><span>当前{copy.title}</span></div>{stage === 'lead' && contentSourceRecords.length > 0 && <div><strong>{respondedContentLeadCount}/{contentSourceRecords.length}</strong><span>内容线索已承接</span></div>}{statusCounts.map((item) => <div key={item.status}><strong>{item.count}</strong><span>{item.status}</span></div>)}<p>{sourceOptions.length ? `${copy.helper} 已有 ${sourceOptions.length} 条已执行的渠道来源可供关联。` : copy.helper}</p></section>
     <section className="table-panel"><div className="table-toolbar"><div><h2>全部{copy.title}</h2><span>{records.length ? '按下一步日期排序' : '等待第一条记录'}</span></div><label className="search-box"><Search size={16} /><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="搜索姓名、联系方式、来源或需求" /></label></div>{records.length ? <div className="table-scroll"><table><thead><tr><th>客户</th><th>来源与需求</th><th>当前状态</th><th>下一步</th><th>负责人</th><th aria-label="操作"></th></tr></thead><tbody>{records.map((record) => {
       const qualification = tacticQualificationForRecord(record)
       const canConfirmIntent = qualification?.recommendation.status === '可人工推进' && record.tacticQualificationStatus === '可人工推进'
-      return <tr key={record.id}><td><button className="record-name" onClick={() => onEdit(record)}><strong>{record.name}</strong><span>{record.contact || `录入于 ${formatDate(record.createdAt)}`}</span></button></td><td><div className="source-cell"><b>{record.source}</b><span>{record.need || '暂未填写需求'}</span></div></td><td><div className="record-status-cell"><span className={`status-pill ${statusTone(record.status)}`}>{record.status}</span>{qualification && <button className={`qualification-pill ${qualificationTone(qualification.status)}`} type="button" onClick={() => onEdit(record)} title={`${qualification.pack.name}：${qualification.status}`}>{qualification.status}</button>}</div></td><td><button className="next-cell" onClick={() => onEdit(record)}><b>{record.nextAction || '待安排'}</b><span>{formatDate(record.nextDate)}</span></button></td><td>{record.owner || '未分配'}</td><td><div className="row-actions">{stage === 'lead' && (qualification ? canConfirmIntent ? <button className="button button-secondary small" onClick={() => onRequestTacticIntent(record)}>确认转为意向<ArrowRight size={14} /></button> : <button className="button button-secondary small" onClick={() => onEdit(record)}>{qualification.status === '待补充信息' ? '补充信息' : '查看判断'}<ChevronRight size={14} /></button> : <button className="button button-secondary small" onClick={() => onMove(record.id, 'intent')}>转为意向<ArrowRight size={14} /></button>)}{stage === 'intent' && <><button className="button button-primary small" onClick={() => onMove(record.id, 'customer')}>标记成交<Check size={14} /></button><button className="icon-button small" title="暂不跟进" aria-label="暂不跟进" onClick={() => onMarkLost(record.id)}><X size={15} /></button></>}{stage === 'customer' && <button className="button button-secondary small" onClick={() => onCompleteAction(record)}>记录回访<Check size={14} /></button>}<button className="icon-button small" title="记录推进事项" aria-label="记录推进事项" onClick={() => onAddEvent(record)}><ClipboardPlus size={15} /></button><button className="icon-button small" title="编辑" aria-label="编辑" onClick={() => onEdit(record)}><ChevronRight size={16} /></button></div></td></tr>
+      const firstResponse = firstResponseByRecord.get(record.id)
+      const firstResponseSla = firstResponseSlaStatus(record, events, lifecycleNow)
+      const firstResponseTone = firstResponseSla === '按时承接' ? 'done' : firstResponseSla === '超时承接' || firstResponseSla === '已超时' ? 'overdue' : 'pending'
+      const firstResponseLabel = firstResponse ? firstResponseSla === '未设时效' ? `已首次承接 · ${formatDate(firstResponse.occurredAt)}` : firstResponseSla : firstResponseSlaLabel(firstResponseSla, record.firstResponseDueAt)
+      return <tr key={record.id}><td><button className="record-name" onClick={() => onEdit(record)}><strong>{record.name}</strong><span>{record.contact || `录入于 ${formatDate(record.createdAt)}`}</span></button></td><td><div className="source-cell"><b>{record.source}</b><span>{record.need || '暂未填写需求'}</span>{record.contentLeadContext && <small className={`lead-response-state ${firstResponseTone}`}>{firstResponseLabel}</small>}</div></td><td><div className="record-status-cell"><span className={`status-pill ${statusTone(record.status)}`}>{record.status}</span>{qualification && <button className={`qualification-pill ${qualificationTone(qualification.status)}`} type="button" onClick={() => onEdit(record)} title={`${qualification.pack.name}：${qualification.status}`}>{qualification.status}</button>}</div></td><td><button className="next-cell" onClick={() => onEdit(record)}><b>{record.nextAction || '待安排'}</b><span>{formatDate(record.nextDate)}</span></button></td><td>{record.owner || '未分配'}</td><td><div className="row-actions">{stage === 'lead' && record.contentLeadContext && !firstResponse && <button className="button button-primary small" onClick={() => onAddEvent(record, firstManualResponseEventType)}>记录首次承接<ClipboardPlus size={14} /></button>}{stage === 'lead' && (qualification ? canConfirmIntent ? <button className="button button-secondary small" onClick={() => onRequestTacticIntent(record)}>确认转为意向<ArrowRight size={14} /></button> : <button className="button button-secondary small" onClick={() => onEdit(record)}>{qualification.status === '待补充信息' ? '补充信息' : '查看判断'}<ChevronRight size={14} /></button> : <button className="button button-secondary small" onClick={() => onMove(record.id, 'intent')}>转为意向<ArrowRight size={14} /></button>)}{stage === 'intent' && <><button className="button button-primary small" onClick={() => onMove(record.id, 'customer')}>标记成交<Check size={14} /></button><button className="icon-button small" title="暂不跟进" aria-label="暂不跟进" onClick={() => onMarkLost(record.id)}><X size={15} /></button></>}{stage === 'customer' && <button className="button button-secondary small" onClick={() => onCompleteAction(record)}>记录回访<Check size={14} /></button>}<button className="icon-button small" title="记录推进事项" aria-label="记录推进事项" onClick={() => onAddEvent(record)}><ClipboardPlus size={15} /></button><button className="icon-button small" title="编辑" aria-label="编辑" onClick={() => onEdit(record)}><ChevronRight size={16} /></button></div></td></tr>
     })}</tbody></table></div> : <EmptyState icon={<FolderPlus size={25} />} title={copy.empty} description={copy.helper} action={<button className="button button-primary" onClick={onAdd}><Plus size={16} />{copy.action}</button>} />}</section>
   </>
 }
@@ -931,9 +1091,10 @@ function ReviewPage({ records, events, onNavigate }: { records: CustomerRecord[]
   const intents = records.filter((record) => record.stage === 'intent').length
   const customers = records.filter((record) => record.stage === 'customer').length
   const lost = records.filter((record) => record.stage === 'lost').length
-  const reviewRows = useMemo(() => tacticReviewRows(records, events), [records, events])
+  const reviewNow = nowLocalDateTime()
+  const reviewRows = useMemo(() => tacticReviewRows(records, events, reviewNow), [records, events, reviewNow])
   const sourceRows = useMemo(() => {
-    const map = new Map<string, { source: string; total: number; informationComplete: number; manuallyReady: number; customers: number }>()
+    const map = new Map<string, { source: string; total: number; firstResponses: number; firstResponsesPending: number; firstResponsesOnTime: number; firstResponsesLate: number; informationComplete: number; manuallyReady: number; customers: number }>()
     const eventTypesByRecord = new Map<string, Set<CustomerStageEvent['type']>>()
     events.forEach((event) => {
       const types = eventTypesByRecord.get(event.recordId) || new Set<CustomerStageEvent['type']>()
@@ -942,22 +1103,27 @@ function ReviewPage({ records, events, onNavigate }: { records: CustomerRecord[]
     })
     records.forEach((record) => {
       const source = record.source || '未记录来源'
-      const current = map.get(source) ?? { source, total: 0, informationComplete: 0, manuallyReady: 0, customers: 0 }
+      const current = map.get(source) ?? { source, total: 0, firstResponses: 0, firstResponsesPending: 0, firstResponsesOnTime: 0, firstResponsesLate: 0, informationComplete: 0, manuallyReady: 0, customers: 0 }
       current.total += 1
+      if (eventTypesByRecord.get(record.id)?.has(firstManualResponseEventType)) current.firstResponses += 1
+      const firstResponseSla = firstResponseSlaStatus(record, events, reviewNow)
+      if (firstResponseSla === '按时承接') current.firstResponsesOnTime += 1
+      if (firstResponseSla === '超时承接') current.firstResponsesLate += 1
+      if (firstResponseSla === '待承接' || firstResponseSla === '即将超时' || firstResponseSla === '已超时') current.firstResponsesPending += 1
       const tactic = growthTacticPackById(record.tacticPackId)
       if (tactic && tacticLeadProgress(tactic, record.tacticLeadValues).complete) current.informationComplete += 1
       if (tactic && tacticLeadProgress(tactic, record.tacticLeadValues).complete && record.tacticQualificationStatus === '可人工推进') current.manuallyReady += 1
       if (record.stage === 'customer' || eventTypesByRecord.get(record.id)?.has('已成交')) current.customers += 1
       map.set(source, current)
     })
-    return [...map.values()].sort((left, right) => right.customers - left.customers || right.manuallyReady - left.manuallyReady || right.total - left.total)
-  }, [records, events])
+    return [...map.values()].sort((left, right) => right.customers - left.customers || right.firstResponsesOnTime - left.firstResponsesOnTime || right.manuallyReady - left.manuallyReady || right.total - left.total)
+  }, [records, events, reviewNow])
   const conversion = leads + intents + customers ? Math.round((customers / Math.max(leads + intents + customers, 1)) * 100) : 0
   return <>
     <PageHeader title="复盘" description="从获客来源一路看到线索、意向和客户，决定下一步把时间花在哪里。" />
     <section className="funnel-panel"><div className="funnel-heading"><div><h2>客户进程</h2><p>这是一张起点清晰的全链路底图，后续获客能力会自动把数据带进来。</p></div><span>{conversion}% 成交占比</span></div><div className="funnel-flow"><FunnelStep label="线索" value={leads} tone="lead" /><FunnelArrow /><FunnelStep label="意向客户" value={intents} tone="intent" /><FunnelArrow /><FunnelStep label="客户" value={customers} tone="customer" /></div><div className="funnel-foot"><span>{lost} 条暂不跟进</span><button className="text-button" onClick={() => onNavigate('leads')}>查看线索</button></div></section>
-    <section className="table-panel tactic-review-panel"><div className="table-toolbar"><div><h2>获客路径结果</h2><span>按每份行业获客路径查看咨询、信息补全、人工推进和已记录的业务结果。</span></div></div>{reviewRows.length ? <><div className="review-truth-note">已记录的推进事项会累计统计。早期没有过程记录的存量客户，只按当前能确认的状态有限补齐，不会倒推无法确认的历史过程。</div><div className="table-scroll"><table><thead><tr><th>获客路径</th><th>咨询</th><th>资料完整</th><th>人工可推进</th><th>已记录预约</th><th>已记录方案/报价</th><th>已记录成交</th><th>未推进</th></tr></thead><tbody>{reviewRows.map((row) => <tr key={row.pack.id}><td><div className="review-path-name"><strong>{row.pack.name}</strong><span>{channelById(row.pack.channelId).shortLabel} · {row.pack.primaryGoal}</span></div></td><td>{row.consultations}</td><td>{row.informationComplete}</td><td>{row.manuallyReady}</td><td>{row.appointments}</td><td>{row.proposalOrQuote}</td><td>{row.customers}</td><td>{row.notMoving}</td></tr>)}</tbody></table></div></> : <EmptyState icon={<ClipboardList size={24} />} title="还没有可复盘的获客路径" description="从已启用打法的匹配渠道登记咨询后，这里才会形成可追溯的路径结果。" action={<button className="button button-secondary" onClick={() => onNavigate('acquisition')}>去配置获客路径<ArrowRight size={15} /></button>} />}</section>
-    <section className="review-grid-core"><div className="table-panel"><div className="table-toolbar"><div><h2>来源结果</h2><span>来源与打法字段会一起回收，先判断哪种动作带来的咨询更值得继续跟进。</span></div></div>{sourceRows.length ? <div className="table-scroll"><table><thead><tr><th>来源</th><th>咨询</th><th>资料完整</th><th>人工可推进</th><th>已记录成交</th></tr></thead><tbody>{sourceRows.map((row) => <tr key={row.source}><td><strong>{row.source}</strong></td><td>{row.total}</td><td>{row.informationComplete}</td><td>{row.manuallyReady}</td><td>{row.customers}</td></tr>)}</tbody></table></div> : <EmptyState icon={<BarChart3 size={24} />} title="暂时没有可复盘的数据" description="先在线索中记录来源，后续推进到意向客户和客户后，这里会形成完整结果。" action={<button className="button button-secondary" onClick={() => onNavigate('leads')}>去记录线索<ArrowRight size={15} /></button>} />}</div><aside className="review-note"><ClipboardList size={20} /><h2>复盘先看什么</h2><ol><li>哪个来源带来的咨询更容易补全资料？</li><li>人工判断后，哪些路径仍然值得推进？</li><li>预约、方案和成交卡在了哪一步？</li></ol><p>没有真实来源、字段和状态记录时，系统不会给出看似聪明但没有依据的结论。</p></aside></section>
+    <section className="table-panel tactic-review-panel"><div className="table-toolbar"><div><h2>获客路径结果</h2><span>先看哪种内容或动作不仅带来咨询，也确实被人工接住并继续推进。</span></div></div>{reviewRows.length ? <><div className="review-truth-note">只有同时记录客户进入时间、承接截止和实际首次回应时间的内容线索，才判断按时或超时；历史存量数据不倒推时效结论。</div><div className="table-scroll"><table><thead><tr><th>获客路径</th><th>咨询</th><th>待承接</th><th>按时承接</th><th>超时承接</th><th>资料完整</th><th>人工可推进</th><th>已记录预约</th><th>已记录方案/报价</th><th>已记录成交</th><th>未推进</th></tr></thead><tbody>{reviewRows.map((row) => <tr key={row.pack.id}><td><div className="review-path-name"><strong>{row.pack.name}</strong><span>{channelById(row.pack.channelId).shortLabel} · {row.pack.primaryGoal}</span></div></td><td>{row.consultations}</td><td>{row.firstResponsesPending}</td><td>{row.firstResponsesOnTime}</td><td>{row.firstResponsesLate}</td><td>{row.informationComplete}</td><td>{row.manuallyReady}</td><td>{row.appointments}</td><td>{row.proposalOrQuote}</td><td>{row.customers}</td><td>{row.notMoving}</td></tr>)}</tbody></table></div></> : <EmptyState icon={<ClipboardList size={24} />} title="还没有可复盘的获客路径" description="从已启用打法的匹配渠道登记咨询后，这里才会形成可追溯的路径结果。" action={<button className="button button-secondary" onClick={() => onNavigate('acquisition')}>去配置获客路径<ArrowRight size={15} /></button>} />}</section>
+    <section className="review-grid-core"><div className="table-panel"><div className="table-toolbar"><div><h2>来源结果</h2><span>先看哪种动作带来的咨询不仅更多，也确实被人工接住。</span></div></div>{sourceRows.length ? <><div className="review-truth-note">“待承接”包含尚在时效内、即将超时和已超时但未记录首次人工承接的内容咨询。</div><div className="table-scroll"><table><thead><tr><th>来源</th><th>咨询</th><th>待承接</th><th>按时承接</th><th>超时承接</th><th>资料完整</th><th>人工可推进</th><th>已记录成交</th></tr></thead><tbody>{sourceRows.map((row) => <tr key={row.source}><td><strong>{row.source}</strong></td><td>{row.total}</td><td>{row.firstResponsesPending}</td><td>{row.firstResponsesOnTime}</td><td>{row.firstResponsesLate}</td><td>{row.informationComplete}</td><td>{row.manuallyReady}</td><td>{row.customers}</td></tr>)}</tbody></table></div></> : <EmptyState icon={<BarChart3 size={24} />} title="暂时没有可复盘的数据" description="先在线索中记录来源，后续推进到意向客户和客户后，这里会形成完整结果。" action={<button className="button button-secondary" onClick={() => onNavigate('leads')}>去记录线索<ArrowRight size={15} /></button>} />}</div><aside className="review-note"><ClipboardList size={20} /><h2>复盘先看什么</h2><ol><li>哪个来源带来的咨询被及时人工接住？</li><li>人工判断后，哪些路径仍然值得推进？</li><li>预约、方案和成交卡在了哪一步？</li></ol><p>没有真实来源、字段和状态记录时，系统不会给出看似聪明但没有依据的结论。</p></aside></section>
   </>
 }
 
@@ -984,23 +1150,32 @@ function ChannelTaskDialog({ channel, task, onClose, onSubmit }: { channel: Chan
   </div>
 }
 
-function RecordDialog({ stage, record, stageEvents = [], sourceOptions, defaultSource = '', tacticPack, onClose, onSubmit }: { stage: Exclude<Stage, 'lost'>; record?: CustomerRecord; stageEvents?: CustomerStageEvent[]; sourceOptions: SourceOption[]; defaultSource?: string; tacticPack?: GrowthTacticPack; onClose: () => void; onSubmit: (formData: FormData) => void }) {
+export function RecordDialog({ stage, record, stageEvents = [], sourceOptions, contentLeadSourceOptions, defaultSource = '', tacticPack, onClose, onSubmit, onRecordFirstResponse, onRequestHandoff }: { stage: Exclude<Stage, 'lost'>; record?: CustomerRecord; stageEvents?: CustomerStageEvent[]; sourceOptions: SourceOption[]; contentLeadSourceOptions: ContentLeadSourceOption[]; defaultSource?: string; tacticPack?: GrowthTacticPack; onClose: () => void; onSubmit: (formData: FormData) => void; onRecordFirstResponse?: () => void; onRequestHandoff?: () => void }) {
   const [selectedStage, setSelectedStage] = useState<Exclude<Stage, 'lost'>>(record?.stage === 'lost' ? stage : record?.stage ?? stage)
   const [tacticDraftValues, setTacticDraftValues] = useState<TacticLeadValues>(record?.tacticLeadValues || {})
   const [tacticQualificationStatus, setTacticQualificationStatus] = useState<TacticQualificationStatus>(record?.tacticQualificationStatus || '')
+  const initialSource = record?.source ?? defaultSource
+  const [source, setSource] = useState(initialSource)
+  const matchingContentLeadContext = contentLeadSourceOptions.find((option) => option.source === source || option.sourceCode === source)?.context
+  const contentLeadContext = record && source === initialSource ? record.contentLeadContext : matchingContentLeadContext || null
   const statuses = stageMeta[selectedStage].statuses
-  const defaultStatus = record?.stage === selectedStage && statuses.includes(record.status) ? record.status : statuses[0]
+  const defaultStatus = record?.stage === selectedStage && statuses.includes(record.status) ? record.status : !record && selectedStage === 'lead' && contentLeadContext ? '待联系' : statuses[0]
   const title = record ? `编辑${stageMeta[selectedStage].label}` : `新建${stageMeta[stage].label}`
   const tacticProgress = tacticPack ? tacticLeadProgress(tacticPack, tacticDraftValues) : null
   const tacticRecommendation = tacticPack ? tacticQualificationRecommendation(tacticPack, tacticDraftValues) : null
+  const firstResponseEvent = [...stageEvents].filter((event) => event.type === firstManualResponseEventType).sort((left, right) => right.occurredAt.localeCompare(left.occurredAt) || right.createdAt.localeCompare(left.createdAt))[0]
+  const firstResponseSla = record ? firstResponseSlaStatus(record, stageEvents, nowLocalDateTime()) : '不适用'
+  const firstResponseSlaText = record ? firstResponseSlaLabel(firstResponseSla, record.firstResponseDueAt) : ''
   return <div className="dialog-backdrop" role="presentation">
     <form className="dialog" onSubmit={(event) => { event.preventDefault(); onSubmit(new FormData(event.currentTarget)) }}>
       <div className="dialog-head"><div><h2>{title}</h2><p>把来源、联系方式、需求和下一步填写清楚，工作台才能帮你持续推进。</p></div><button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button></div>
       <div className="form-grid">
         <label className="field"><span>姓名或称呼</span><input name="name" required autoFocus defaultValue={record?.name ?? ''} placeholder="例如：王女士 / 某公司负责人" /></label>
         <label className="field"><span>联系方式</span><input name="contact" defaultValue={record?.contact ?? ''} placeholder="例如：手机号 / 微信备注名" /></label>
-        <label className="field field-wide"><span>来源</span><input name="source" list="channel-source-options" defaultValue={record?.source ?? defaultSource} placeholder="例如：扫码、电话、朋友介绍" /></label>
+        <label className="field field-wide"><span>来源</span><input name="source" list="channel-source-options" value={source} onChange={(event) => setSource(event.target.value)} placeholder="例如：扫码、电话、朋友介绍" /></label>
         {sourceOptions.length ? <datalist id="channel-source-options">{sourceOptions.map((source) => <option key={source.id} value={source.label} />)}</datalist> : null}
+        {contentLeadContext && <section className="content-lead-context field-wide" aria-label="内容承接快照"><div className="content-lead-context-head"><div><Link2 size={16} /><div><strong>内容承接快照</strong><small>这是客户进入时对应的已锁定内容；后续改稿不会改写这条线索的承接依据。</small></div></div><span>{channelById(contentLeadContext.channelId).shortLabel}</span></div><div className="content-lead-context-title"><strong>{contentLeadContext.title || '未命名内容'}</strong></div><dl>{contentLeadContext.customerPromise && <div><dt>内容承诺</dt><dd>{contentLeadContext.customerPromise}</dd></div>}{contentLeadContext.customerNextAction && <div><dt>客户下一步</dt><dd>{contentLeadContext.customerNextAction}</dd></div>}{contentLeadContext.inquiryOwner && <div><dt>咨询承接人</dt><dd>{contentLeadContext.inquiryOwner}</dd></div>}{contentLeadContext.firstResponseTarget && <div><dt>首次承接时效</dt><dd>{contentLeadContext.firstResponseTarget}</dd></div>}{contentLeadContext.inquiryEntry && <div><dt>人工入口</dt><dd>{contentLeadContext.inquiryEntry}</dd></div>}{contentLeadContext.firstResponsePlan && <div><dt>首轮人工回应</dt><dd>{contentLeadContext.firstResponsePlan}</dd></div>}{contentLeadContext.customerPreparation && <div><dt>客户先准备</dt><dd>{contentLeadContext.customerPreparation}</dd></div>}{contentLeadContext.serviceBoundary && <div><dt>服务与报价边界</dt><dd>{contentLeadContext.serviceBoundary}</dd></div>}</dl><p>系统不会自动私信、加好友或预约；店员仍需按客户实际情况完成沟通和判断。</p></section>}
+        {record && contentLeadContext && <section className={`first-response-panel field-wide ${firstResponseEvent ? 'done' : ''}`} aria-label="首次人工承接"><div><span>{firstResponseSlaText}</span><h3>首次人工承接</h3><p>{firstResponseEvent ? `${formatDate(firstResponseEvent.occurredAt)} 已记录。${record.firstResponseDueAt ? ` 截止时间为 ${formatDate(record.firstResponseDueAt)}。` : ''}` : `客户已因这条内容进入线索，需由店员按实际情况完成第一次人工回应。${record.firstResponseDueAt ? ` 首次承接截止：${formatDate(record.firstResponseDueAt)}。` : ''}`}</p></div><div className="first-response-actions">{onRecordFirstResponse && !firstResponseEvent && <button className="button button-primary small" type="button" onClick={onRecordFirstResponse}>记录首次承接<ClipboardPlus size={14} /></button>}{onRequestHandoff && <button className="button button-secondary small" type="button" onClick={onRequestHandoff}>转交负责人<ArrowRight size={14} /></button>}</div>{firstResponseEvent?.note && <p className="first-response-note">{firstResponseEvent.note}</p>}{!firstResponseEvent && <small>记录时请写清：已确认什么、客户还需补什么资料，以及双方约定的下一步。不会自动发送任何消息。</small>}</section>}
         <label className="field field-wide"><span>需求</span><textarea name="need" rows={3} defaultValue={record?.need ?? ''} placeholder="他想解决什么问题，是否有明确的购买或服务需求？" /></label>
         {tacticPack ? <fieldset className="tactic-lead-intake">
           <input type="hidden" name="tacticPackId" value={tacticPack.id} />
@@ -1012,9 +1187,9 @@ function RecordDialog({ stage, record, stageEvents = [], sourceOptions, defaultS
         </fieldset> : <input type="hidden" name="tacticPackId" value="" />}
         <label className="field"><span>当前阶段</span><select name="stage" value={selectedStage} onChange={(event) => setSelectedStage(event.target.value as Exclude<Stage, 'lost'>)}>{(Object.keys(stageMeta) as Array<Exclude<Stage, 'lost'>>).map((item) => <option key={item} value={item}>{stageMeta[item].label}</option>)}</select></label>
         <label className="field"><span>当前状态</span><select name="status" key={`${selectedStage}-${defaultStatus}`} defaultValue={defaultStatus}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
-        <label className="field"><span>负责人</span><input name="owner" defaultValue={record?.owner ?? ''} placeholder="例如：张店长" /></label>
-        <label className="field"><span>下一步日期</span><input name="nextDate" type="date" defaultValue={record?.nextDate ?? ''} /></label>
-        <label className="field field-wide"><span>下一步动作</span><input name="nextAction" defaultValue={record?.nextAction ?? ''} placeholder={tacticPack?.followUpSteps[0]?.action || '例如：明天电话确认到店时间'} /></label>
+        <label className="field"><span>负责人</span><input name="owner" defaultValue={record?.owner || contentLeadContext?.inquiryOwner || ''} placeholder="例如：张店长" /></label>
+        <label className="field"><span>下一步日期</span><input name="nextDate" type="date" defaultValue={record?.nextDate ?? (!record && selectedStage === 'lead' && contentLeadContext?.firstResponsePlan ? todayISO() : '')} /></label>
+        <label className="field field-wide"><span>下一步动作</span><input name="nextAction" defaultValue={record?.nextAction ?? (!record && selectedStage === 'lead' ? contentLeadContext?.firstResponsePlan || tacticPack?.followUpSteps[0]?.action || '' : '')} placeholder={contentLeadContext?.firstResponsePlan || tacticPack?.followUpSteps[0]?.action || '例如：明天电话确认到店时间'} /></label>
         <label className="field field-wide"><span>备注</span><textarea name="note" rows={2} defaultValue={record?.note ?? ''} placeholder="可选，记录需要留意的事情" /></label>
         {record && <section className="customer-event-history field-wide" aria-label="推进记录"><div><h3>推进记录</h3><small>保存客户资料后，可在列表中继续补充每一次预约、方案、报价或成交。</small></div>{stageEvents.length ? <div className="customer-event-list">{[...stageEvents].sort((left, right) => right.occurredAt.localeCompare(left.occurredAt) || right.createdAt.localeCompare(left.createdAt)).slice(0, 5).map((event) => <article className="customer-event-row" key={event.id}><div><strong className="customer-event-type">{event.type}</strong><span>{formatDate(event.occurredAt)}</span></div>{event.note && <p>{event.note}</p>}</article>)}</div> : <p className="customer-event-empty">暂时没有推进记录。</p>}</section>}
       </div>
@@ -1023,8 +1198,8 @@ function RecordDialog({ stage, record, stageEvents = [], sourceOptions, defaultS
   </div>
 }
 
-function CustomerStageEventDialog({ record, onClose, onSubmit }: { record: CustomerRecord; onClose: () => void; onSubmit: (formData: FormData) => void }) {
-  const [selectedType, setSelectedType] = useState<CustomerStageEvent['type']>(customerStageEventDefinitions[0].type)
+export function CustomerStageEventDialog({ record, initialType, onClose, onSubmit }: { record: CustomerRecord; initialType?: CustomerStageEvent['type']; onClose: () => void; onSubmit: (formData: FormData) => void }) {
+  const [selectedType, setSelectedType] = useState<CustomerStageEvent['type']>(initialType || customerStageEventDefinitions[0].type)
   const definition = customerStageEventByType(selectedType) || customerStageEventDefinitions[0]
   const nextStageLabel = definition.nextStage === 'intent' ? '意向客户' : definition.nextStage === 'customer' ? '客户' : definition.nextStage === 'lost' ? '暂不跟进' : ''
   const nextStatusLabel = definition.nextStatus || ''
@@ -1035,10 +1210,28 @@ function CustomerStageEventDialog({ record, onClose, onSubmit }: { record: Custo
       <div className="form-grid">
         <label className="field field-wide"><span>本次推进事项</span><select name="type" value={selectedType} onChange={(event) => setSelectedType(event.target.value as CustomerStageEvent['type'])}>{customerStageEventDefinitions.map((item) => <option key={item.type} value={item.type}>{item.type}</option>)}</select></label>
         <section className="customer-event-effect field-wide"><strong>{definition.description}</strong><p>{nextStageLabel && nextStatusLabel ? `保存后会同步为：${nextStageLabel} · ${nextStatusLabel}` : '本次只保留过程记录，不改变当前阶段和状态。'}</p></section>
-        <label className="field"><span>发生日期</span><input name="occurredAt" type="date" defaultValue={todayISO()} /></label>
-        <label className="field field-wide"><span>补充说明</span><textarea name="note" rows={3} placeholder="例如：已约好周六下午到店，客户会带现场尺寸和照片" /></label>
+        {selectedType === firstManualResponseEventType && <section className="first-response-guidance field-wide"><strong>{record.contentLeadContext ? `发布时指定承接人：${record.contentLeadContext.inquiryOwner || record.owner || '未记录'}。客户进入时的承诺：${record.contentLeadContext.customerPromise || record.contentLeadContext.title}` : '首次人工承接只记录实际发生的回应。'}</strong><p>{record.firstResponseDueAt ? `首次承接截止：${formatDate(record.firstResponseDueAt)}。` : '这条历史线索没有设定承接时效，不会倒推按时或超时。'} 备注必须写清已确认的信息、还缺的资料和明确下一步；不把客户未同意提供的信息写成已获得。</p></section>}
+        <label className="field"><span>{selectedType === firstManualResponseEventType ? '实际承接时间' : '发生日期'}</span><input name="occurredAt" type={selectedType === firstManualResponseEventType ? 'datetime-local' : 'date'} defaultValue={selectedType === firstManualResponseEventType ? nowLocalDateTime() : todayISO()} /></label>
+        <label className="field field-wide"><span>补充说明{selectedType === firstManualResponseEventType ? ' *' : ''}</span><textarea name="note" rows={3} required={selectedType === firstManualResponseEventType} placeholder={selectedType === firstManualResponseEventType ? '例如：已确认在服务范围内，客户本周补充户型图和坑距；明晚 19:30 由店长人工回复。' : '例如：已约好周六下午到店，客户会带现场尺寸和照片'} /></label>
       </div>
       <div className="dialog-foot"><button className="button button-secondary" type="button" onClick={onClose}>取消</button><button className="button button-primary" type="submit">保存记录<Check size={16} /></button></div>
+    </form>
+  </div>
+}
+
+export function OwnershipHandoffDialog({ record, onClose, onSubmit }: { record: CustomerRecord; onClose: () => void; onSubmit: (formData: FormData) => void }) {
+  const currentOwner = record.owner || record.contentLeadContext?.inquiryOwner || '未分配负责人'
+  return <div className="dialog-backdrop" role="presentation">
+    <form className="dialog customer-stage-event-dialog" onSubmit={(event) => { event.preventDefault(); onSubmit(new FormData(event.currentTarget)) }}>
+      <div className="dialog-head"><div><h2>转交承接负责人</h2><p>只改变这条客户记录的后续人工责任，不会向客户或第三方自动发送任何通知。</p></div><button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button></div>
+      <div className="customer-event-summary"><div><span>客户</span><strong>{record.name}</strong></div><div><span>当前负责人</span><strong>{currentOwner}</strong></div><div><span>来源</span><strong>{record.source || '未记录来源'}</strong></div></div>
+      <div className="form-grid">
+        <section className="first-response-guidance field-wide"><strong>交接后，新负责人会出现在今日承接队列和客户档案中。</strong><p>请写清交接原因、已经完成的沟通内容以及下一步；工作台只保存责任依据，不自动转发消息。</p></section>
+        <label className="field"><span>新的承接负责人 *</span><input name="nextOwner" required autoFocus placeholder="例如：销售小李" /></label>
+        <label className="field"><span>实际交接时间</span><input name="occurredAt" type="datetime-local" defaultValue={nowLocalDateTime()} /></label>
+        <label className="field field-wide"><span>交接说明 *</span><textarea name="note" rows={4} required placeholder="例如：原负责人下班，已确认客户在本地城区；客户今晚补充照片，明早由小李人工继续确认尺寸。" /></label>
+      </div>
+      <div className="dialog-foot"><button className="button button-secondary" type="button" onClick={onClose}>取消</button><button className="button button-primary" type="submit">确认交接<Check size={16} /></button></div>
     </form>
   </div>
 }

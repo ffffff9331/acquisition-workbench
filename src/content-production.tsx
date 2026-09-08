@@ -89,6 +89,22 @@ export type ContentProductionData = {
   learnings: ContentLearningRecord[]
 }
 
+export type ContentLeadContext = {
+  contentTaskId: string
+  variantId: string
+  channelId: ChannelId
+  title: string
+  customerPromise: string
+  customerNextAction: string
+  inquiryOwner: string
+  firstResponseTarget: ContentReleaseConfirmation['firstResponseTarget']
+  inquiryEntry: string
+  firstResponsePlan: string
+  customerPreparation: string
+  serviceBoundary: string
+  lockedAt: string
+}
+
 export const emptyContentProductionData: ContentProductionData = { tasks: [], activeTaskId: '', learnings: [] }
 
 const channelIds: ChannelId[] = ['douyin', 'xiaohongshu', 'wechat', 'offline', 'referral', 'bilibili']
@@ -205,6 +221,31 @@ export function normalizeContentProductionData(value: unknown): ContentProductio
   }).filter((task) => task.title) : []
   const activeTaskId = tasks.some((task) => task.id === raw.activeTaskId) ? clean(raw.activeTaskId, 120) : tasks[0]?.id || ''
   return { tasks, activeTaskId, learnings: normalizeContentLearnings(raw.learnings) }
+}
+
+// A lead keeps this snapshot so later draft edits cannot rewrite the promise it originally responded to.
+export function contentLeadContextForExecution(data: ContentProductionData, channelId: ChannelId, executionItemId: string): ContentLeadContext | null {
+  if (!executionItemId.trim()) return null
+  for (const task of data.tasks) {
+    const variant = task.variants.find((item) => item.channelId === channelId && item.executionItemId === executionItemId && Boolean(item.lockedAt) && contentReleaseConfirmationReady(item.releaseConfirmation))
+    if (!variant) continue
+    return {
+      contentTaskId: task.id,
+      variantId: variant.id,
+      channelId,
+      title: task.title || variant.title,
+      customerPromise: task.audienceGain,
+      customerNextAction: variant.callToAction,
+      inquiryOwner: variant.releaseConfirmation.inquiryOwner,
+      firstResponseTarget: variant.releaseConfirmation.firstResponseTarget,
+      inquiryEntry: variant.releaseConfirmation.inquiryEntry,
+      firstResponsePlan: variant.releaseConfirmation.firstResponsePlan,
+      customerPreparation: variant.releaseConfirmation.customerPreparation,
+      serviceBoundary: variant.releaseConfirmation.serviceBoundary,
+      lockedAt: variant.lockedAt,
+    }
+  }
+  return null
 }
 
 function createVariant(channelId: ChannelId, title: string, callToAction: string, executionItemId = ''): ContentVariant {
@@ -628,7 +669,7 @@ export function ContentProductionPanel({ data, opportunities, evidence, industry
               {([['factsVerified', '事实已核对', '数字、价格、案例和效果承诺'], ['channelFitVerified', '渠道表达已核对', `适合${channelById(activeVariant.channelId).shortLabel}用户阅读或观看`], ['assetsReady', '素材已准备', '需要的实拍、截图或现场材料已齐'], ['reviewConfirmed', '体检问题已处理', reviewReady ? '本地阻断已清除，AI 评审结果仍由你判断' : aiReviewIsStale ? '草稿变化后需要重新评审' : `还有 ${localReviewBlockers.length} 个本地阻断问题`], ['manualReviewed', '人工已通读', '内容自然、下一步清楚、可以发布']] as Array<[keyof ContentPreflight, string, string]>).map(([key, label, note]) => { const disabled = Boolean(activeVariant.lockedAt) || key === 'reviewConfirmed' && !reviewReady; return <label key={key} className={`${activeVariant.preflight[key] ? 'done' : ''} ${disabled ? 'disabled' : ''}`}><input type="checkbox" disabled={disabled} checked={activeVariant.preflight[key]} onChange={(event) => updateVariant((variant) => ({ ...variant, preflight: { ...variant.preflight, [key]: event.target.checked } }))} /><span><Check size={13} /></span><b>{label}</b><small>{note}</small></label> })}
             </div>
               <div className={`content-release-confirmation ${readiness?.releaseReady ? 'ready' : ''}`}>
-                <div className="content-release-confirmation-head"><div><ShieldCheck size={16} /><div><strong>发布确认</strong><small>只记录这次发布需要的人、素材和平台确认；内容变化后需重新确认。</small></div></div><span>{readiness?.releaseReady ? '已补齐' : '待补齐'}</span></div>
+                <div className="content-release-confirmation-head"><div><ShieldCheck size={16} /><div><strong>发布与咨询承接确认</strong><small>确认发布责任、素材和平台规则，也确认客户进来后由谁、按什么边界人工接住。</small></div></div><span>{readiness?.releaseReady ? '已补齐' : '待补齐'}</span></div>
                 <div className="content-release-grid">
                   <label className="field"><span>是否使用 AI 生成或合成素材</span><select disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.releaseConfirmation.aiMaterial} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, aiMaterial: event.target.value as ContentReleaseConfirmation['aiMaterial'], aiLabelChecked: event.target.value === '已使用' ? variant.releaseConfirmation.aiLabelChecked : false } }))}><option value="">请选择</option><option value="未使用">未使用</option><option value="已使用">已使用</option></select></label>
                   <label className="field"><span>是否使用客户案例、照片或反馈</span><select disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.releaseConfirmation.customerMaterial} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, customerMaterial: event.target.value as ContentReleaseConfirmation['customerMaterial'], customerMaterialAuthorized: event.target.value === '已使用' ? variant.releaseConfirmation.customerMaterialAuthorized : false } }))}><option value="">请选择</option><option value="未使用">未使用</option><option value="已使用">已使用</option></select></label>
@@ -639,6 +680,11 @@ export function ContentProductionPanel({ data, opportunities, evidence, industry
                   <label className="field"><span>发布负责人</span><input disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.releaseConfirmation.publisher} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, publisher: event.target.value } }))} placeholder="例如：小王" /></label>
                   <label className="field"><span>咨询承接人</span><input disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.releaseConfirmation.inquiryOwner} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, inquiryOwner: event.target.value } }))} placeholder="例如：店长 / 销售小李" /></label>
                   <label className="field"><span>平台规则核对日期</span><input disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.releaseConfirmation.platformRulesCheckedAt} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, platformRulesCheckedAt: event.target.value } }))} placeholder="例如：2026-08-27" /></label>
+                  <label className="field"><span>首次承接时效</span><select disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.releaseConfirmation.firstResponseTarget} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, firstResponseTarget: event.target.value as ContentReleaseConfirmation['firstResponseTarget'] } }))}><option value="30分钟内">30 分钟内</option><option value="2小时内">2 小时内</option><option value="当天完成">当天完成</option></select><small>这是人工承接目标，不会自动发送消息或替人回复。</small></label>
+                  <label className="field field-wide"><span>客户从哪里进入</span><input disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.releaseConfirmation.inquiryEntry} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, inquiryEntry: event.target.value } }))} placeholder="例如：抖音私信说出视频里的关键词；或到店时提供来源编号" /><small>写清这条内容实际把用户带到哪个人工入口，不增加自动私信、加好友或自动预约。</small></label>
+                  <label className="field"><span>首轮人工回应</span><textarea disabled={Boolean(activeVariant.lockedAt)} rows={3} value={activeVariant.releaseConfirmation.firstResponsePlan} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, firstResponsePlan: event.target.value } }))} placeholder="例如：当天人工确认地区、现状和期望，再判断是否安排量尺" /></label>
+                  <label className="field"><span>客户先准备什么</span><textarea disabled={Boolean(activeVariant.lockedAt)} rows={3} value={activeVariant.releaseConfirmation.customerPreparation} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, customerPreparation: event.target.value } }))} placeholder="例如：城市、户型尺寸、现场照片或目前最关心的问题" /></label>
+                  <label className="field field-wide"><span>服务与报价边界</span><textarea disabled={Boolean(activeVariant.lockedAt)} rows={3} value={activeVariant.releaseConfirmation.serviceBoundary} onChange={(event) => updateVariant((variant) => ({ ...variant, releaseConfirmation: { ...variant.releaseConfirmation, serviceBoundary: event.target.value } }))} placeholder="例如：仅服务 XX 区域；报价需现场测量和配置确认；不能远程承诺最终工期" /></label>
                 </div>
               </div>
               <div className="content-final-actions"><button className="button button-secondary" type="button" onClick={() => void copyFinal()} disabled={!activeVariant.body}><Clipboard size={15} />复制当前内容</button><button className={`button ${activeVariant.lockedAt ? 'button-secondary' : 'button-primary'}`} type="button" onClick={toggleLock} disabled={!activeVariant.lockedAt && !canLock}>{activeVariant.lockedAt ? <Unlock size={15} /> : <Lock size={15} />}{activeVariant.lockedAt ? '解除锁定' : '锁定最终版本'}</button>{activeVariant.lockedAt && <button className="button button-primary" type="button" onClick={() => onOpenChannel(activeVariant.channelId)}>进入{channelById(activeVariant.channelId).shortLabel}手工发布<ArrowRight size={15} /></button>}</div>

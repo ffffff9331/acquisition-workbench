@@ -1,3 +1,5 @@
+import { normalizeFirstResponseTarget, type FirstResponseTarget } from './lead-response-sla'
+
 export type ContentReleaseConfirmation = {
   aiMaterial: '' | '未使用' | '已使用'
   aiLabelChecked: boolean
@@ -7,6 +9,11 @@ export type ContentReleaseConfirmation = {
   publishingAccount: string
   publisher: string
   inquiryOwner: string
+  firstResponseTarget: FirstResponseTarget
+  inquiryEntry: string
+  firstResponsePlan: string
+  customerPreparation: string
+  serviceBoundary: string
   platformRulesCheckedAt: string
 }
 
@@ -19,6 +26,11 @@ export const emptyContentReleaseConfirmation: ContentReleaseConfirmation = {
   publishingAccount: '',
   publisher: '',
   inquiryOwner: '',
+  firstResponseTarget: '当天完成',
+  inquiryEntry: '',
+  firstResponsePlan: '',
+  customerPreparation: '',
+  serviceBoundary: '',
   platformRulesCheckedAt: '',
 }
 
@@ -40,6 +52,11 @@ export function normalizeContentReleaseConfirmation(value: unknown): ContentRele
     publishingAccount: clean(item.publishingAccount, 160),
     publisher: clean(item.publisher, 120),
     inquiryOwner: clean(item.inquiryOwner, 120),
+    firstResponseTarget: normalizeFirstResponseTarget(item.firstResponseTarget),
+    inquiryEntry: clean(item.inquiryEntry, 300),
+    firstResponsePlan: clean(item.firstResponsePlan, 800),
+    customerPreparation: clean(item.customerPreparation, 800),
+    serviceBoundary: clean(item.serviceBoundary, 800),
     platformRulesCheckedAt: /^\d{4}-\d{2}-\d{2}$/.test(clean(item.platformRulesCheckedAt, 20)) ? clean(item.platformRulesCheckedAt, 20) : '',
   }
 }
@@ -49,5 +66,6 @@ export function contentReleaseConfirmationReady(confirmation: ContentReleaseConf
   const customerMaterialReady = Boolean(confirmation.customerMaterial) && (confirmation.customerMaterial === '未使用' || confirmation.customerMaterialAuthorized)
   const promotionReady = Boolean(confirmation.promotionMarking)
   const responsibilityReady = Boolean(confirmation.publishingAccount.trim() && confirmation.publisher.trim() && confirmation.inquiryOwner.trim() && confirmation.platformRulesCheckedAt)
-  return aiReady && customerMaterialReady && promotionReady && responsibilityReady
+  const intakeReady = Boolean(confirmation.firstResponseTarget && confirmation.inquiryEntry.trim() && confirmation.firstResponsePlan.trim() && confirmation.customerPreparation.trim() && confirmation.serviceBoundary.trim())
+  return aiReady && customerMaterialReady && promotionReady && responsibilityReady && intakeReady
 }

@@ -1,4 +1,5 @@
 import type { ChannelId } from './channels'
+import type { TrafficPlan } from './traffic-campaign'
 
 export type TacticLeadField = {
   id: string
@@ -45,6 +46,7 @@ export type GrowthTacticPack = {
   prePublishChecks: string[]
   channelExecutionSteps: TacticExecutionStep[]
   experimentPlan: TacticExperimentPlan
+  trafficPlan: TrafficPlan
   callToAction: string
   leadFields: TacticLeadField[]
   qualificationRules: string[]
@@ -145,6 +147,14 @@ export const bathroomDouyinMeasurementTactic: GrowthTacticPack = {
     guardrailMetrics: ['封面、标题、开头与正文是否兑现同一承诺。', '人工是否能在明确服务范围和回复节奏内承接咨询。', '负向反馈、无效咨询和后续服务成本是否异常。'],
     oneVariableRule: '一轮只改变一个主要变量，例如现场问题切入、首屏表达或主要动作的表述；其余条件尽量保持一致。',
   },
+  trafficPlan: {
+    primaryMode: '平台自然推荐',
+    backupModes: ['主动需求截流'],
+    defaultTestWindowDays: 7,
+    successSignal: '7 天内记录来自本地、愿意补全现场资料的有效咨询，以及进入到店或量尺的数量；不只看播放量。',
+    evidencePriorities: ['真实量尺或安装现场', '产品规格与不适用条件', '获得授权的本地案例与服务范围'],
+    firstExecutionGate: '必须准备可核对的现场画面或尺寸说明，并明确平台内人工承接人和唯一下一步。',
+  },
   callToAction: '私信卫生间尺寸或户型情况，由门店人工确认是否适合预约到店或量尺。',
   leadFields: [
     { id: 'service-area', label: '所在区域', purpose: '确认是否在当前服务范围内。', required: true, placeholder: '例如：杭州临平区' },
@@ -193,6 +203,14 @@ export const bathroomXiaohongshuCaseTactic: GrowthTacticPack = {
     primaryMetric: '补全本打法包必填信息的线索数。',
     guardrailMetrics: ['封面、标题、开头和正文是否兑现同一案例承诺。', '案例条件、授权和服务边界是否清楚，是否出现误解或负向反馈。', '人工承接后进入预约、方案或报价的质量，以及相应服务成本。'],
     oneVariableRule: '一轮只调整一个主要变量，例如案例场景、封面承诺、前 30 字或主要动作的表述；不要同时更换案例、标题、正文和承接方式。',
+  },
+  trafficPlan: {
+    primaryMode: '主动需求截流',
+    backupModes: ['平台自然推荐'],
+    defaultTestWindowDays: 14,
+    successSignal: '14 天内记录从具体案例场景进入、愿意提交区域与现场资料的有效私信，以及进入到店或量尺的数量；不只看收藏。',
+    evidencePriorities: ['条件可说明的真实案例', '改造过程与现场限制', '可公开的尺寸、材料或授权反馈'],
+    firstExecutionGate: '至少有两条公开需求证据和一份可以说明条件、授权与不适用边界的案例材料。',
   },
   callToAction: '私信所在区域和卫生间照片或户型情况，由门店人工判断是否适合继续沟通、到店或量尺。',
   leadFields: [
@@ -244,6 +262,14 @@ export const bathroomReferralServiceExperienceTactic: GrowthTacticPack = {
     primaryMetric: '补全本打法包必填信息，并由人工确认可继续沟通的推荐线索数。',
     guardrailMetrics: ['老客户的服务问题是否被优先处理，是否出现压力、投诉或负面体验。', '新客户是否明确同意沟通，联系与资料收集是否符合最小必要原则。', '后续预约、方案、报价和成交质量，以及维护和承接所需的服务成本。'],
     oneVariableRule: '一轮只调整一个主要变量，例如回访场景、介绍说明或交接方式；不要同时改变服务内容、感谢方式、推荐对象和承接流程。',
+  },
+  trafficPlan: {
+    primaryMode: '合作转介绍',
+    backupModes: [],
+    defaultTestWindowDays: 14,
+    successSignal: '14 天内记录新客户本人同意沟通后的有效咨询、资料补全和后续到店或量尺，不以转发或推荐次数单独判断。',
+    evidencePriorities: ['已完成服务的体验核对', '新客户本人同意沟通的记录', '清晰的资料与结果反馈边界'],
+    firstExecutionGate: '先完成服务体验核对并确认客户愿意介绍，不索取或导入未经本人同意的联系方式。',
   },
   callToAction: '由推荐人先确认新客户愿意沟通，再由门店人工确认区域、改造阶段和卫生间需求，判断是否适合到店或量尺。',
   leadFields: [
@@ -297,6 +323,14 @@ export const bathroomDesignerPartnershipTactic: GrowthTacticPack = {
     guardrailMetrics: ['业主是否明确同意沟通与资料交接，是否出现绕开合作方、误解职责或隐私边界的问题。', '设计师与门店的职责、方案、报价和现场确认是否一致，是否造成返工、投诉或协同压力。', '后续到店、量尺、方案、报价、成交质量，以及维护合作和项目承接所需的人力成本。'],
     oneVariableRule: '一轮只调整一个主要变量，例如协同问题类型、介绍说明或资料交接方式；不要同时改变合作对象、项目场景、产品方案、报价与后续承接。',
   },
+  trafficPlan: {
+    primaryMode: '合作转介绍',
+    backupModes: [],
+    defaultTestWindowDays: 14,
+    successSignal: '14 天内记录业主本人同意后进入的真实项目协同需求、资料补全和方案或量尺推进，不以拜访数或联系人数量单独判断。',
+    evidencePriorities: ['明确的项目协同问题', '业主同意与最小资料交接边界', '门店和设计师的职责说明'],
+    firstExecutionGate: '先写清设计师、门店与业主各自负责什么，以及业主同意沟通和资料交接的方式。',
+  },
   callToAction: '设计师先确认业主愿意沟通，再由门店人工核对区域、项目阶段、卫生间协同问题和已有资料，判断是否适合到店或量尺。',
   leadFields: [
     { id: 'partner-context', label: '合作方与项目交接场景', purpose: '确认哪位合作伙伴在什么真实项目中介绍，以及业主是否已同意由门店继续沟通。', required: true, inputKind: 'longText', placeholder: '例如：某设计工作室正在做旧房改造；业主已同意门店联系，需确认小卫生间浴室柜和马桶布局' },
@@ -348,6 +382,14 @@ export const bathroomCommunityRenovationTactic: GrowthTacticPack = {
     guardrailMetrics: ['社区许可、现场秩序、客户隐私和咨询体验是否出现投诉、压力或负面反馈。', '到场、扫码或登记是否真正回收到有效问题、预约、方案或报价，而不是停在中间指标。', '门店人员、样品、交通、场地和后续承接投入是否在可承担范围内。'],
     oneVariableRule: '一轮只调整一个主要变量，例如社区选择、主问题、现场服务形式或主要行动引导；不要同时更换活动地点、样品、讲解、登记方式和后续承接。',
   },
+  trafficPlan: {
+    primaryMode: '同城线下触达',
+    backupModes: [],
+    defaultTestWindowDays: 7,
+    successSignal: '7 天内记录本人同意联系、能说明具体改造问题的咨询，以及进入到店或量尺的数量；不以人流、扫码或到场量单独判断。',
+    evidencePriorities: ['已确认的社区许可与现场安排', '与本轮问题对应的样品或判断清单', '最小必要的登记与后续承接说明'],
+    firstExecutionGate: '先确认社区许可、人员、现场服务边界和登记用途，未具备这些条件不开始活动。',
+  },
   callToAction: '现场登记老房卫生间的具体问题和大致区域；由门店人工确认服务范围与现场条件，再判断是否适合到店或量尺。',
   leadFields: [
     { id: 'community-context', label: '社区与现场咨询场景', purpose: '确认客户来自哪场已许可活动、在现场提出了什么真实问题，以及是否同意继续沟通。', required: true, inputKind: 'longText', placeholder: '例如：XX 社区周末咨询日；本人同意后续联系，想确认旧卫生间换马桶和浴室柜是否需要改水电' },
@@ -392,6 +434,7 @@ export function growthTacticPackPayload(pack?: GrowthTacticPack) {
     prePublishChecks: pack.prePublishChecks,
     channelExecutionSteps: pack.channelExecutionSteps,
     experimentPlan: pack.experimentPlan,
+    trafficPlan: pack.trafficPlan,
     callToAction: pack.callToAction,
     leadFields: pack.leadFields,
     qualificationRules: pack.qualificationRules,
