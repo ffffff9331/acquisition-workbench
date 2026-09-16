@@ -38,6 +38,10 @@ export type ContentVersion = {
   callToAction: string
   coverCopy: string
   visualPlan: string
+  titleOptions: string[]
+  hookOptions: string[]
+  pinnedComment: string
+  directMessageReply: string
 }
 
 export type ContentVariant = {
@@ -51,6 +55,10 @@ export type ContentVariant = {
   callToAction: string
   coverCopy: string
   visualPlan: string
+  titleOptions: string[]
+  hookOptions: string[]
+  pinnedComment: string
+  directMessageReply: string
   claimChecks: ContentClaimCheck[]
   qualityReview: ContentQualityReview
   preflight: ContentPreflight
@@ -129,6 +137,14 @@ function clean(value: unknown, maxLength: number) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : ''
 }
 
+function cleanList(value: unknown, maxItems: number, maxLength: number) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').map((item) => clean(item, maxLength)).filter(Boolean).slice(0, maxItems) : []
+}
+
+function optionListFromText(value: string, maxItems: number, maxLength: number) {
+  return value.split(/\n+/).map((item) => clean(item, maxLength)).filter(Boolean).slice(0, maxItems)
+}
+
 function normalizePreflight(value: unknown): ContentPreflight {
   const item = value && typeof value === 'object' ? value as Partial<ContentPreflight> : {}
   return {
@@ -155,6 +171,10 @@ function normalizeVersions(value: unknown): ContentVersion[] {
       callToAction: clean(version.callToAction, 1000),
       coverCopy: clean(version.coverCopy, 500),
       visualPlan: clean(version.visualPlan, 8000),
+      titleOptions: cleanList(version.titleOptions, 5, 200),
+      hookOptions: cleanList(version.hookOptions, 3, 800),
+      pinnedComment: clean(version.pinnedComment, 1000),
+      directMessageReply: clean(version.directMessageReply, 1500),
     }
   }).slice(0, 20)
 }
@@ -174,6 +194,10 @@ function normalizeVariant(value: unknown): ContentVariant | null {
     callToAction: clean(item.callToAction, 1000),
     coverCopy: clean(item.coverCopy, 500),
     visualPlan: clean(item.visualPlan, 8000),
+    titleOptions: cleanList(item.titleOptions, 5, 200),
+    hookOptions: cleanList(item.hookOptions, 3, 800),
+    pinnedComment: clean(item.pinnedComment, 1000),
+    directMessageReply: clean(item.directMessageReply, 1500),
     claimChecks: Array.isArray(item.claimChecks) ? item.claimChecks.filter((claim) => claim && typeof claim === 'object').map((claim) => ({
       statement: clean(claim.statement, 500),
       evidenceId: clean(claim.evidenceId, 120),
@@ -261,6 +285,10 @@ function createVariant(channelId: ChannelId, title: string, callToAction: string
     callToAction,
     coverCopy: '',
     visualPlan: '',
+    titleOptions: [],
+    hookOptions: [],
+    pinnedComment: '',
+    directMessageReply: '',
     claimChecks: [],
     qualityReview: emptyContentQualityReview,
     preflight: { ...emptyPreflight },
@@ -311,19 +339,23 @@ function variantSnapshot(variant: ContentVariant, reason: string): ContentVersio
     callToAction: variant.callToAction,
     coverCopy: variant.coverCopy,
     visualPlan: variant.visualPlan,
+    titleOptions: variant.titleOptions,
+    hookOptions: variant.hookOptions,
+    pinnedComment: variant.pinnedComment,
+    directMessageReply: variant.directMessageReply,
   }
 }
 
 function channelGuidance(channelId: ChannelId) {
-  if (channelId === 'douyin') return '前 3 秒明确客户问题；正文适合真人口播或现场演示；visualPlan 按镜头逐行列出；coverCopy 不超过两行。'
-  if (channelId === 'xiaohongshu') return '标题符合真实搜索意图；正文便于分段阅读；visualPlan 按首图、过程图、证明图、收尾图排序；封面只建议产品实拍加短文案，或直接使用标题。'
+  if (channelId === 'douyin') return '首要目标是让目标客户在前 3 秒停留并愿意私信；提供 5 个标题和 3 个开头备选，选择其中一组作为正文版本；正文适合 20 到 45 秒真人口播或现场演示；visualPlan 按镜头逐行列出；coverCopy 不超过两行；补齐置顶评论和人工私信首回。'
+  if (channelId === 'xiaohongshu') return '首要目标是让目标客户点击、收藏并愿意私信；提供 5 个标题和 3 个首图开头备选，选择其中一组作为正文版本；正文便于手机分段阅读；visualPlan 按封面、判断页、证明页、限制页、收尾页排序；封面只建议产品实拍加短文案，或直接使用标题；补齐评论区承接和人工私信首回。'
   if (channelId === 'wechat') return '先明确触达人群和关系语境；语气像真实经营者；避免硬广堆砌；给出一个清楚且不过度打扰的联系动作。'
   if (channelId === 'bilibili') return '开头说明观众看完能解决什么；outline 使用章节结构；正文允许更完整的解释和案例；visualPlan 标记讲解、演示和证明素材。'
   if (channelId === 'offline') return '内容用于活动招募或现场物料；正文讲清适合谁、时间地点、参与价值和登记方式；visualPlan 列出海报、现场展示和登记物料。'
   return '先讲清合作对象为什么愿意推荐；正文包含适合推荐的人、证明材料、推荐动作和合作边界；避免承诺无法兑现的权益。'
 }
 
-function draftFromOutput(output: unknown) {
+export function draftFromOutput(output: unknown) {
   const raw = output && typeof output === 'object' && 'draft' in output && (output as { draft?: unknown }).draft && typeof (output as { draft: unknown }).draft === 'object'
     ? (output as { draft: Record<string, unknown> }).draft
     : output && typeof output === 'object' ? output as Record<string, unknown> : {}
@@ -340,6 +372,10 @@ function draftFromOutput(output: unknown) {
     callToAction: clean(raw.callToAction, 1000),
     coverCopy: clean(raw.coverCopy, 500),
     visualPlan: listText(raw.visualPlan, 8000),
+    titleOptions: cleanList(raw.titleOptions, 5, 200),
+    hookOptions: cleanList(raw.hookOptions, 3, 800),
+    pinnedComment: clean(raw.pinnedComment, 1000),
+    directMessageReply: clean(raw.directMessageReply, 1500),
     claimChecks,
   }
 }
@@ -454,6 +490,10 @@ export function ContentProductionPanel({ data, opportunities, evidence, industry
       callToAction: version.callToAction,
       coverCopy: version.coverCopy,
       visualPlan: version.visualPlan,
+      titleOptions: version.titleOptions,
+      hookOptions: version.hookOptions,
+      pinnedComment: version.pinnedComment,
+      directMessageReply: version.directMessageReply,
       lockedAt: '',
       preflight: { ...variant.preflight, manualReviewed: false },
       organicExperiment: { ...emptyOrganicExperimentPlan },
@@ -503,7 +543,13 @@ export function ContentProductionPanel({ data, opportunities, evidence, industry
             callToAction: activeVariant.callToAction,
             coverCopy: activeVariant.coverCopy,
             visualPlan: activeVariant.visualPlan,
+            titleOptions: activeVariant.titleOptions,
+            hookOptions: activeVariant.hookOptions,
+            pinnedComment: activeVariant.pinnedComment,
+            directMessageReply: activeVariant.directMessageReply,
           },
+          optimizationTarget: activeVariant.channelId === 'douyin' ? '提高目标客户停留和有效私信的可能性，不承诺爆款。' : activeVariant.channelId === 'xiaohongshu' ? '提高目标客户点击、收藏和有效私信的可能性，不承诺爆款。' : '帮助目标客户理解内容并完成一个清楚的下一步。',
+          packageRequirements: activeVariant.channelId === 'douyin' || activeVariant.channelId === 'xiaohongshu' ? { titleOptions: 5, hookOptions: 3, pinnedComment: true, directMessageReply: true } : undefined,
           validatedLearnings: validatedLearnings.slice(0, 8).map((item) => ({ decision: item.decision, summary: item.summary, keepRules: item.keepRules, changeRules: item.changeRules, avoidRules: item.avoidRules, nextGenerationRules: item.nextGenerationRules, note: item.note })),
         },
       })
@@ -590,7 +636,16 @@ export function ContentProductionPanel({ data, opportunities, evidence, industry
 
   const copyFinal = async () => {
     if (!activeVariant) return
-    const text = [activeVariant.title, activeVariant.hook, activeVariant.body, activeVariant.callToAction].filter(Boolean).join('\n\n')
+    const text = [
+      activeVariant.title,
+      activeVariant.titleOptions.length ? `标题备选\n${activeVariant.titleOptions.join('\n')}` : '',
+      activeVariant.hook,
+      activeVariant.hookOptions.length ? `开头备选\n${activeVariant.hookOptions.join('\n')}` : '',
+      activeVariant.body,
+      activeVariant.callToAction,
+      activeVariant.pinnedComment ? `置顶评论\n${activeVariant.pinnedComment}` : '',
+      activeVariant.directMessageReply ? `私信首回\n${activeVariant.directMessageReply}` : '',
+    ].filter(Boolean).join('\n\n')
     try {
       await navigator.clipboard.writeText(text)
       onToast('已复制当前内容')
@@ -601,7 +656,7 @@ export function ContentProductionPanel({ data, opportunities, evidence, industry
 
   return <section className="content-production" id="content-production">
     <div className="content-production-heading">
-      <div><span><FileText size={16} /></span><div><h2>内容生产台</h2><p>把获客机会加工成有证据、有素材、有渠道版本的可发布内容。</p></div></div>
+      <div><span><FileText size={16} /></span><div><h2>高潜内容工厂</h2><p>把真实需求加工成更有机会获得停留、点击和有效私信的抖音视频与小红书笔记。</p></div></div>
       <div className="content-production-summary"><span><b>{data.tasks.length}</b>内容任务</span><span><b>{data.tasks.reduce((sum, task) => sum + task.variants.length, 0)}</b>渠道版本</span><span><b>{data.tasks.filter((task) => task.variants.some((variant) => variant.lockedAt)).length}</b>已锁定</span><span><b>{data.learnings.filter((item) => item.status === '已采用').length}</b>已沉淀规则</span></div>
     </div>
 
@@ -635,16 +690,19 @@ export function ContentProductionPanel({ data, opportunities, evidence, industry
           {activeTask.variants.length > 0 && <div className="content-variant-tabs">{activeTask.variants.map((variant) => <button key={variant.id} className={activeVariant?.id === variant.id ? 'active' : ''} type="button" onClick={() => updateTask((task) => ({ ...task, activeVariantId: variant.id }))}><span className={`mini-channel-icon ${variant.channelId}`}>{channelById(variant.channelId).icon}</span>{channelById(variant.channelId).shortLabel}{variant.lockedAt && <Lock size={11} />}</button>)}</div>}
 
           {!activeVariant ? <div className="content-variant-empty">选择一个渠道，建立第一份渠道版本。</div> : <>
-            <div className="content-variant-toolbar"><div><strong>{channelById(activeVariant.channelId).shortLabel}表达规则</strong><p>{channelGuidance(activeVariant.channelId)}</p></div><div><button className="button button-secondary small" type="button" onClick={createManualSnapshot} disabled={Boolean(activeVariant.lockedAt)}><History size={13} />保存版本</button><button className="button button-primary small" type="button" onClick={() => void generateDraft()} disabled={generating || Boolean(activeVariant.lockedAt)}>{generating ? <RotateCcw className="spin" size={13} /> : <Sparkles size={13} />}{generating ? '正在生成' : activeVariant.body ? '重新生成草稿' : '生成渠道草稿'}</button><button className="icon-button small" type="button" title="移除渠道版本" aria-label="移除渠道版本" onClick={removeVariant}><Trash2 size={14} /></button></div></div>
+            <div className="content-variant-toolbar"><div><strong>{channelById(activeVariant.channelId).shortLabel}高潜内容规则</strong><p>{channelGuidance(activeVariant.channelId)}</p></div><div><button className="button button-secondary small" type="button" onClick={createManualSnapshot} disabled={Boolean(activeVariant.lockedAt)}><History size={13} />保存版本</button><button className="button button-primary small" type="button" onClick={() => void generateDraft()} disabled={generating || Boolean(activeVariant.lockedAt)}>{generating ? <RotateCcw className="spin" size={13} /> : <Sparkles size={13} />}{generating ? '正在生成' : activeVariant.body ? '重新生成内容包' : '生成高潜内容包'}</button><button className="icon-button small" type="button" title="移除渠道版本" aria-label="移除渠道版本" onClick={removeVariant}><Trash2 size={14} /></button></div></div>
             {error && <div className="service-error content-error"><AlertTriangle size={14} />{error}</div>}
             <div className="content-draft-grid">
               <label className="field field-wide"><span>渠道标题</span><input disabled={Boolean(activeVariant.lockedAt)} value={activeVariant.title} onChange={(event) => updateVariant((variant) => ({ ...variant, title: event.target.value }))} /></label>
+              {(activeVariant.channelId === 'douyin' || activeVariant.channelId === 'xiaohongshu') && <label className="field field-wide"><span>高潜标题备选（每行一条）</span><textarea disabled={Boolean(activeVariant.lockedAt)} rows={5} value={activeVariant.titleOptions.join('\n')} onChange={(event) => updateVariant((variant) => ({ ...variant, titleOptions: optionListFromText(event.target.value, 5, 200) }))} placeholder="生成后保留 5 个不同切入角度，人工选一个与真实素材最匹配的标题" /></label>}
               <label className="field"><span>开头</span><textarea disabled={Boolean(activeVariant.lockedAt)} rows={5} value={activeVariant.hook} onChange={(event) => updateVariant((variant) => ({ ...variant, hook: event.target.value }))} placeholder="第一句话为什么值得客户继续看" /></label>
+              {(activeVariant.channelId === 'douyin' || activeVariant.channelId === 'xiaohongshu') && <label className="field"><span>{activeVariant.channelId === 'douyin' ? '3 秒开头备选（每行一条）' : '首图 / 首段开头备选（每行一条）'}</span><textarea disabled={Boolean(activeVariant.lockedAt)} rows={5} value={activeVariant.hookOptions.join('\n')} onChange={(event) => updateVariant((variant) => ({ ...variant, hookOptions: optionListFromText(event.target.value, 3, 800) }))} placeholder="生成后保留 3 个不同表达，发布时只选一个进入正文" /></label>}
               <label className="field"><span>结构 / 大纲</span><textarea disabled={Boolean(activeVariant.lockedAt)} rows={5} value={activeVariant.outline} onChange={(event) => updateVariant((variant) => ({ ...variant, outline: event.target.value }))} placeholder="每行一个部分" /></label>
               <label className="field field-wide"><span>正文 / 脚本</span><textarea disabled={Boolean(activeVariant.lockedAt)} rows={12} value={activeVariant.body} onChange={(event) => updateVariant((variant) => ({ ...variant, body: event.target.value }))} placeholder="AI 生成后仍需结合真实产品、案例和经营者表达进行修改" /></label>
               <label className="field"><span>客户下一步</span><textarea disabled={Boolean(activeVariant.lockedAt)} rows={3} value={activeVariant.callToAction} onChange={(event) => updateVariant((variant) => ({ ...variant, callToAction: event.target.value }))} /></label>
               <label className="field"><span>封面文案</span><textarea disabled={Boolean(activeVariant.lockedAt)} rows={3} value={activeVariant.coverCopy} onChange={(event) => updateVariant((variant) => ({ ...variant, coverCopy: event.target.value }))} placeholder="小红书只建议产品实拍加短文案，或直接使用标题" /></label>
               <label className="field field-wide"><span>画面 / 素材安排</span><textarea disabled={Boolean(activeVariant.lockedAt)} rows={6} value={activeVariant.visualPlan} onChange={(event) => updateVariant((variant) => ({ ...variant, visualPlan: event.target.value }))} placeholder="逐行写清使用什么真实画面，以及它要证明什么" /></label>
+              {(activeVariant.channelId === 'douyin' || activeVariant.channelId === 'xiaohongshu') && <><label className="field"><span>置顶评论 / 评论区承接</span><textarea disabled={Boolean(activeVariant.lockedAt)} rows={4} value={activeVariant.pinnedComment} onChange={(event) => updateVariant((variant) => ({ ...variant, pinnedComment: event.target.value }))} placeholder="只重复一个清楚动作，不用诱导或夸张承诺" /></label><label className="field"><span>人工私信首回</span><textarea disabled={Boolean(activeVariant.lockedAt)} rows={4} value={activeVariant.directMessageReply} onChange={(event) => updateVariant((variant) => ({ ...variant, directMessageReply: event.target.value }))} placeholder="先确认客户实际情况，再说明下一步；不自动发送" /></label></>}
             </div>
 
             {activeVariant.claimChecks.length > 0 && <div className="claim-checks"><div><ShieldCheck size={15} /><strong>AI 提出的事实核对项</strong><small>这些提示不能替代人工核实。</small></div>{activeVariant.claimChecks.map((claim, index) => { const source = evidence.find((item) => item.id === claim.evidenceId); return <article key={`${claim.statement}-${index}`}><span>{index + 1}</span><div><strong>{claim.statement}</strong><p>{claim.risk || '发布前确认这句话有真实依据。'}</p>{source && <button type="button" onClick={() => window.open(source.url, '_blank', 'noopener,noreferrer')}>{source.title}</button>}</div></article> })}</div>}

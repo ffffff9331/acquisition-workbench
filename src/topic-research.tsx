@@ -5,7 +5,7 @@ import type { AISecretStatus, AIServiceSettings } from './ai-service'
 import { channelById, type ChannelId } from './channels'
 import { buildIndustrySearchQuery, evaluateOpportunityByIndustryRules, industryRulePayload, type IndustryRulePack } from './industry-rules'
 import { growthTacticPackPayload, type GrowthTacticPack } from './tactic-packs'
-import { campaignEndAt, campaignLifecycle, campaignTimingLabel, normalizeCampaignStatus, normalizeCampaignTestWindowDays, normalizeTrafficMode, trafficModes, type CampaignStatus, type TrafficMode } from './traffic-campaign'
+import { campaignEndAt, campaignLifecycle, campaignTimingLabel, canStartCampaign, diagnoseCampaignPerformance, normalizeCampaignStatus, normalizeCampaignTestWindowDays, normalizeTrafficMode, trafficModes, type CampaignStatus, type TrafficMode } from './traffic-campaign'
 
 export type ResearchSource = 'web' | 'douyin' | 'xiaohongshu' | 'wechat' | 'bilibili'
 export type ResearchFreshness = 'week' | 'month' | 'year' | 'all'
@@ -514,8 +514,8 @@ export function TopicResearchPanel({ data, industryPack, tacticPack, aiSettings,
     const campaignOwner = String(formData.get('campaignOwner') || '').trim().slice(0, 120)
     const campaignStartedAt = String(formData.get('campaignStartedAt') || '').slice(0, 40)
     const campaignNote = String(formData.get('campaignNote') || '').trim().slice(0, 1000)
-    if (!campaignOwner || !campaignStartedAt) {
-      setError('请记录本轮负责人和实际开始时间。')
+    if (!canStartCampaign(campaignOwner, campaignStartedAt, campaignNote)) {
+      setError('请记录本轮负责人、实际开始时间和执行说明。')
       return
     }
     const campaignEndsAt = campaignEndAt(campaignStartedAt, campaignStarter.testWindowDays)
@@ -598,7 +598,8 @@ export function TopicResearchPanel({ data, industryPack, tacticPack, aiSettings,
         const trafficPlan = `${item.trafficMode} · ${item.testWindowDays} 天验证`
         const performance = performanceByOpportunity[item.id] || []
         const totals = performance.reduce((summary, result) => ({ reach: summary.reach + result.reach, interactions: summary.interactions + result.interactions, platformInquiries: summary.platformInquiries + result.platformInquiries, registeredLeads: summary.registeredLeads + result.registeredLeads, qualifiedLeads: summary.qualifiedLeads + result.qualifiedLeads, customers: summary.customers + result.customers }), { reach: 0, interactions: 0, platformInquiries: 0, registeredLeads: 0, qualifiedLeads: 0, customers: 0 })
-        const resultLabel = totals.customers ? '已带来成交' : totals.qualifiedLeads ? '已产生有效线索' : totals.registeredLeads || totals.platformInquiries ? '已产生咨询' : performance.some((result) => result.executed) ? '数据观察中' : performance.length ? '等待执行' : '尚未进入渠道'
+        const diagnosis = diagnoseCampaignPerformance({ executed: performance.some((result) => result.executed), ...totals })
+        const resultLabel = `${diagnosis.label}：${diagnosis.nextAction}`
         const linkedChannels = new Set(item.adoptions.map((adoption) => adoption.channelId))
         const campaign = campaignLifecycle(item, new Date().toISOString())
         const canReview = campaign.status === '等待复盘' || campaign.status === '已复盘'
@@ -621,7 +622,7 @@ function currentLocalDateTimeInput() {
 }
 
 function CampaignStartDialog({ opportunity, onClose, onSubmit }: { opportunity: GeneratedTopicCandidate; onClose: () => void; onSubmit: (formData: FormData) => void }) {
-  return <div className="dialog-backdrop" role="presentation"><form className="dialog traffic-campaign-dialog" onSubmit={(event) => { event.preventDefault(); onSubmit(new FormData(event.currentTarget)) }}><div className="dialog-head"><div><h2>记录本轮已开始</h2><p>只有这里由负责人确认后，战役才开始计入验证期。创建渠道任务、打开平台或准备素材不等于已经执行。</p></div><button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button></div><div className="traffic-campaign-summary"><span>流量战役</span><strong>{opportunity.title}</strong><small>已关联：{opportunity.adoptions.map((adoption) => channelById(adoption.channelId).shortLabel).join('、')} · 本轮验证 {opportunity.testWindowDays} 天</small></div><div className="form-grid"><label className="field"><span>本轮负责人 *</span><input name="campaignOwner" required autoFocus defaultValue={opportunity.campaignOwner} placeholder="例如：张店长" /></label><label className="field"><span>实际开始时间 *</span><input name="campaignStartedAt" type="datetime-local" required defaultValue={opportunity.campaignStartedAt || currentLocalDateTimeInput()} /></label><label className="field field-wide"><span>执行说明</span><textarea name="campaignNote" rows={3} defaultValue={opportunity.campaignNote} placeholder="例如：已人工发布第一条内容；评论和私信由店长在营业时间承接" /></label><section className="traffic-campaign-boundary field-wide"><ShieldCheck size={16} /><p><strong>确认后会发生什么</strong>工作台将记录验证开始与截止时间，并汇总已有渠道中的曝光、咨询、线索和成交。它不会替你发布、私信、联系合作方或投放广告。</p></section></div><div className="dialog-foot"><button className="button button-secondary" type="button" onClick={onClose}>取消</button><button className="button button-primary" type="submit">确认开始验证<Check size={16} /></button></div></form></div>
+  return <div className="dialog-backdrop" role="presentation"><form className="dialog traffic-campaign-dialog" onSubmit={(event) => { event.preventDefault(); onSubmit(new FormData(event.currentTarget)) }}><div className="dialog-head"><div><h2>记录本轮已开始</h2><p>只有这里由负责人确认后，战役才开始计入验证期。创建渠道任务、打开平台或准备素材不等于已经执行。</p></div><button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button></div><div className="traffic-campaign-summary"><span>流量战役</span><strong>{opportunity.title}</strong><small>已关联：{opportunity.adoptions.map((adoption) => channelById(adoption.channelId).shortLabel).join('、')} · 本轮验证 {opportunity.testWindowDays} 天</small></div><div className="form-grid"><label className="field"><span>本轮负责人 *</span><input name="campaignOwner" required autoFocus defaultValue={opportunity.campaignOwner} placeholder="例如：张店长" /></label><label className="field"><span>实际开始时间 *</span><input name="campaignStartedAt" type="datetime-local" required defaultValue={opportunity.campaignStartedAt || currentLocalDateTimeInput()} /></label><label className="field field-wide"><span>执行说明 *</span><textarea name="campaignNote" rows={3} required defaultValue={opportunity.campaignNote} placeholder="例如：已人工发布第一条内容；评论和私信由店长在营业时间承接" /></label><section className="traffic-campaign-boundary field-wide"><ShieldCheck size={16} /><p><strong>确认后会发生什么</strong>工作台将记录验证开始与截止时间，并汇总已有渠道中的曝光、咨询、线索和成交。它不会替你发布、私信、联系合作方或投放广告。</p></section></div><div className="dialog-foot"><button className="button button-secondary" type="button" onClick={onClose}>取消</button><button className="button button-primary" type="submit">确认开始验证<Check size={16} /></button></div></form></div>
 }
 
 function TrafficCampaignDialog({ opportunity, onClose, onSubmit }: { opportunity: GeneratedTopicCandidate; onClose: () => void; onSubmit: (formData: FormData) => void }) {

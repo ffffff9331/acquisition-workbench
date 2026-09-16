@@ -43,7 +43,7 @@ export function firstResponseDeadline(intakeAt: string, target: FirstResponseTar
 }
 
 function firstResponseEvent(events: CustomerStageEvent[], recordId: string) {
-  return events.filter((event) => event.recordId === recordId && event.type === firstManualResponseEventType && /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/.test(event.occurredAt)).sort((left, right) => right.occurredAt.localeCompare(left.occurredAt) || right.createdAt.localeCompare(left.createdAt))[0]
+  return events.filter((event) => event.recordId === recordId && event.type === firstManualResponseEventType && /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/.test(event.occurredAt)).sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.createdAt.localeCompare(right.createdAt))[0]
 }
 
 function hasContentLeadContext(value: unknown) {

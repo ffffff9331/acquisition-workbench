@@ -65,6 +65,8 @@ async function main() {
     assert.equal(contentGeneration.data.output.draft.title, '证据型渠道草稿')
     assert.equal(observed[2].body.messages[0].content.includes('内容编辑与事实核对助手'), true)
     assert.equal(observed[2].body.messages[0].content.includes('不得虚构价格'), true)
+    assert.equal(observed[2].body.messages[0].content.includes('titleOptions 必须提供 5 个不同'), true)
+    assert.equal(observed[2].body.messages[0].content.includes('directMessageReply 是店员人工首回'), true)
     assert.equal(observed[2].body.messages[1].content.includes('真实来源'), true)
     assert.equal(observed[2].body.messages[1].content.includes('标题必须对应当前证据'), true)
 

@@ -535,7 +535,7 @@ function App() {
       })
     })
     return result
-  }, [data.bilibili, data.douyin, data.offline, data.records, data.topicResearch.generatedTopics, data.wechat, data.xiaohongshu])
+  }, [data.bilibili, data.douyin, data.offline, data.records, data.referral, data.topicResearch.generatedTopics, data.wechat, data.xiaohongshu])
   const activeSources: SourceOption[] = [
     ...data.channelTasks.filter((task) => task.channelId !== 'douyin' && task.channelId !== 'xiaohongshu' && task.channelId !== 'wechat' && task.channelId !== 'offline' && task.channelId !== 'referral' && task.channelId !== 'bilibili' && ['已发布', '执行中', '跟进中', '已完成'].includes(task.status)).map((task) => ({ id: task.id, label: sourceLabel(task) })),
     ...douyinSourceOptions(data.douyin),

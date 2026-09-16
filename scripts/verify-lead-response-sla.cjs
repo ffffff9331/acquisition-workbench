@@ -28,6 +28,10 @@ try {
   assert.equal(sla.firstResponseSlaStatus(base, [], '2026-09-08T10:31'), '已超时', '超过截止仍未回应应标记已超时')
   assert.equal(sla.firstResponseSlaStatus(base, [{ id: 'on-time', recordId: 'lead-1', type: '首次人工承接', occurredAt: '2026-09-08T10:30', note: '', createdAt: '2026-09-08T10:30' }], '2026-09-08T11:00'), '按时承接', '截止时间内的实际首次回应应标记按时承接')
   assert.equal(sla.firstResponseSlaStatus(base, [{ id: 'late', recordId: 'lead-1', type: '首次人工承接', occurredAt: '2026-09-08T10:31', note: '', createdAt: '2026-09-08T10:31' }], '2026-09-08T11:00'), '超时承接', '截止时间后的实际首次回应应标记超时承接')
+  assert.equal(sla.firstResponseSlaStatus(base, [
+    { id: 'first-on-time', recordId: 'lead-1', type: '首次人工承接', occurredAt: '2026-09-08T10:20', note: '首次已回应。', createdAt: '2026-09-08T10:20' },
+    { id: 'duplicate-late', recordId: 'lead-1', type: '首次人工承接', occurredAt: '2026-09-08T10:40', note: '误重复记录。', createdAt: '2026-09-08T10:40' },
+  ], '2026-09-08T11:00'), '按时承接', '重复记录首次承接时，SLA 必须以最早一次实际回应为准')
   assert.equal(sla.firstResponseSlaStatus({ ...base, firstResponseDueAt: '' }, [], '2026-09-08T11:00'), '未设时效', '历史记录没有时效时不能虚构超时结论')
   assert.equal(sla.firstResponseSlaStatus({ ...base, contentLeadContext: null }, [], '2026-09-08T11:00'), '不适用', '非内容来源记录不应进入首次承接 SLA')
 

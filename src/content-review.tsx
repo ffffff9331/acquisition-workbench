@@ -57,6 +57,10 @@ export type ContentRevisionProposal = {
     callToAction: string
     coverCopy: string
     visualPlan: string
+    titleOptions: string[]
+    hookOptions: string[]
+    pinnedComment: string
+    directMessageReply: string
     claimChecks: Array<{ statement: string; evidenceId: string; risk: string }>
   }
   service: 'official' | 'custom'
@@ -91,6 +95,10 @@ function clean(value: unknown, maxLength: number) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : ''
 }
 
+function cleanList(value: unknown, maxItems: number, maxLength: number) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').map((item) => clean(item, maxLength)).filter(Boolean).slice(0, maxItems) : []
+}
+
 function clampScore(value: unknown) {
   const score = Number(value)
   return Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : 0
@@ -105,8 +113,8 @@ function fingerprintText(value: string) {
   return (hash >>> 0).toString(36)
 }
 
-export function contentDraftFingerprint(variant: Pick<ContentVariant, 'title' | 'hook' | 'outline' | 'body' | 'callToAction' | 'coverCopy' | 'visualPlan'>) {
-  return fingerprintText([variant.title, variant.hook, variant.outline, variant.body, variant.callToAction, variant.coverCopy, variant.visualPlan].join('\n---\n'))
+export function contentDraftFingerprint(variant: Pick<ContentVariant, 'title' | 'hook' | 'outline' | 'body' | 'callToAction' | 'coverCopy' | 'visualPlan' | 'titleOptions' | 'hookOptions' | 'pinnedComment' | 'directMessageReply'>) {
+  return fingerprintText([variant.title, (variant.titleOptions || []).join('\n'), variant.hook, (variant.hookOptions || []).join('\n'), variant.outline, variant.body, variant.callToAction, variant.coverCopy, variant.visualPlan, variant.pinnedComment, variant.directMessageReply].join('\n---\n'))
 }
 
 export function normalizeContentQualityReview(value: unknown): ContentQualityReview {
@@ -153,6 +161,10 @@ export function normalizeContentQualityReview(value: unknown): ContentQualityRev
       callToAction: clean(rawRevision.draft.callToAction, 1000),
       coverCopy: clean(rawRevision.draft.coverCopy, 500),
       visualPlan: Array.isArray(rawRevision.draft.visualPlan) ? rawRevision.draft.visualPlan.filter((item): item is string => typeof item === 'string').join('\n').slice(0, 8000) : clean(rawRevision.draft.visualPlan, 8000),
+      titleOptions: cleanList(rawRevision.draft.titleOptions, 5, 200),
+      hookOptions: cleanList(rawRevision.draft.hookOptions, 3, 800),
+      pinnedComment: clean(rawRevision.draft.pinnedComment, 1000),
+      directMessageReply: clean(rawRevision.draft.directMessageReply, 1500),
       claimChecks: Array.isArray(rawRevision.draft.claimChecks) ? rawRevision.draft.claimChecks.filter((item) => item && typeof item === 'object').map((item) => ({ statement: clean(item.statement, 500), evidenceId: clean(item.evidenceId, 120), risk: clean(item.risk, 500) })).filter((item) => item.statement).slice(0, 12) : [],
     },
     service: rawRevision.service === 'custom' ? 'custom' as const : 'official' as const,
@@ -173,8 +185,28 @@ function uniqueActions(value: string) {
   return actionTerms.filter((term) => value.includes(term))
 }
 
+const platformContentChannels = new Set(['douyin', 'xiaohongshu'])
+
+function distinctNonEmpty(values: string[]) {
+  return [...new Set(values.map((item) => item.trim()).filter(Boolean))]
+}
+
+export function evaluatePlatformContentRules(variant: ContentVariant): ContentRuleCheck[] {
+  if (!platformContentChannels.has(variant.channelId)) return []
+  const titleOptions = distinctNonEmpty(variant.titleOptions || [])
+  const hookOptions = distinctNonEmpty(variant.hookOptions || [])
+  return [
+    { id: 'platform-title-options', label: '标题备选齐全', status: titleOptions.length >= 5 ? '通过' : '阻断', message: titleOptions.length >= 5 ? '已准备至少 5 个不同标题，发布前可人工择优。' : `当前只有 ${titleOptions.length} 个不同标题，至少需要 5 个。`, suggestion: '围绕客户问题、风险、步骤、反例和结果分别准备标题，发布时只选一个。' },
+    { id: 'platform-hook-options', label: variant.channelId === 'douyin' ? '3 秒开头备选齐全' : '首图 / 首段开头备选齐全', status: hookOptions.length >= 3 ? '通过' : '阻断', message: hookOptions.length >= 3 ? '已准备至少 3 个不同开头，发布前可人工择优。' : `当前只有 ${hookOptions.length} 个不同开头，至少需要 3 个。`, suggestion: variant.channelId === 'douyin' ? '准备 3 个能在前 3 秒说清客户问题或风险的开头。' : '准备 3 个能在首图或首段说清客户问题的开头。' },
+    { id: 'platform-pinned-comment', label: '评论区承接已准备', status: (variant.pinnedComment || '').trim() ? '通过' : '阻断', message: (variant.pinnedComment || '').trim() ? '已写明评论区的单一承接动作。' : '还没有置顶评论或评论区承接文案。', suggestion: '只保留一个清楚动作，例如让客户评论关键词或私信发送具体资料。' },
+    { id: 'platform-direct-message-reply', label: '人工私信首回已准备', status: (variant.directMessageReply || '').trim() ? '通过' : '阻断', message: (variant.directMessageReply || '').trim() ? '已准备人工私信首回，不会自动代替店员发送。' : '还没有人工私信首回。', suggestion: '先确认客户所在地区、现状和关键资料，再说明人工下一步；不要承诺自动回复或保证成交。' },
+  ]
+}
+
 export function evaluateContentRules(task: ContentTask, variant: ContentVariant, evidence: ResearchEvidence[], industryPack?: IndustryRulePack): ContentRuleCheck[] {
-  const fullDraft = [variant.title, variant.hook, variant.outline, variant.body, variant.callToAction, variant.coverCopy, variant.visualPlan].join('\n')
+  const titleOptions = variant.titleOptions || []
+  const hookOptions = variant.hookOptions || []
+  const fullDraft = [variant.title, ...titleOptions, variant.hook, ...hookOptions, variant.outline, variant.body, variant.callToAction, variant.coverCopy, variant.visualPlan, variant.pinnedComment, variant.directMessageReply].join('\n')
   const selectedEvidence = evidence.filter((item) => task.evidenceIds.includes(item.id))
   const validClaimLinks = variant.claimChecks.filter((claim) => selectedEvidence.some((item) => item.id === claim.evidenceId)).length
   const placeholders = placeholderPatterns.filter((pattern) => pattern.test(fullDraft))
@@ -195,7 +227,7 @@ export function evaluateContentRules(task: ContentTask, variant: ContentVariant,
     { id: 'claims', label: '事实核对可追踪', status: !variant.claimChecks.length || validClaimLinks === variant.claimChecks.length ? '通过' : '提醒', message: !variant.claimChecks.length ? '没有单独列出的高风险事实项。' : validClaimLinks === variant.claimChecks.length ? `${validClaimLinks} 个事实核对项都关联了来源。` : `${variant.claimChecks.length - validClaimLinks} 个事实核对项没有关联当前来源。`, suggestion: '为事实、数字、案例和效果表述关联来源，或删除无法证明的说法。' },
     { id: 'specificity', label: '避免营销空话', status: vagueTerms.length >= 3 ? '提醒' : '通过', message: vagueTerms.length >= 3 ? `发现较多泛化表达：${vagueTerms.join('、')}。` : '没有发现大量常见营销套话。', suggestion: '用具体场景、步骤、判断标准和真实证明替代抽象形容词。' },
   ]
-  return [...baseChecks, ...evaluateIndustryContentRules(industryPack, fullDraft, task.proofPlan, task.assetRequirements)]
+  return [...baseChecks, ...evaluatePlatformContentRules(variant), ...evaluateIndustryContentRules(industryPack, fullDraft, task.proofPlan, task.assetRequirements)]
 }
 
 export function contentRuleScore(checks: ContentRuleCheck[]) {
@@ -265,7 +297,7 @@ export function ContentReviewPanel({ task, variant, evidence, industryPack, aiSe
           industryRules: industryRulePayload(industryPack),
           channel: { id: variant.channelId, name: channelById(variant.channelId).shortLabel },
           evidence: selectedEvidence.map((item) => ({ id: item.id, title: item.title, summary: item.summary, publishedDate: item.publishedDate })),
-          draft: { title: variant.title, hook: variant.hook, outline: variant.outline, body: variant.body, callToAction: variant.callToAction, coverCopy: variant.coverCopy, visualPlan: variant.visualPlan },
+          draft: { title: variant.title, hook: variant.hook, outline: variant.outline, body: variant.body, callToAction: variant.callToAction, coverCopy: variant.coverCopy, visualPlan: variant.visualPlan, titleOptions: variant.titleOptions, hookOptions: variant.hookOptions, pinnedComment: variant.pinnedComment, directMessageReply: variant.directMessageReply },
           deterministicChecks: localChecks,
         },
       })
@@ -313,7 +345,7 @@ export function ContentReviewPanel({ task, variant, evidence, industryPack, aiSe
           industryRules: industryRulePayload(industryPack),
           channel: { id: variant.channelId, name: channelById(variant.channelId).shortLabel, guidance: channelGuidance },
           evidence: selectedEvidence.map((item) => ({ id: item.id, title: item.title, summary: item.summary, publishedDate: item.publishedDate })),
-          currentDraft: { title: variant.title, hook: variant.hook, outline: variant.outline, body: variant.body, callToAction: variant.callToAction, coverCopy: variant.coverCopy, visualPlan: variant.visualPlan, claimChecks: variant.claimChecks },
+          currentDraft: { title: variant.title, hook: variant.hook, outline: variant.outline, body: variant.body, callToAction: variant.callToAction, coverCopy: variant.coverCopy, visualPlan: variant.visualPlan, titleOptions: variant.titleOptions, hookOptions: variant.hookOptions, pinnedComment: variant.pinnedComment, directMessageReply: variant.directMessageReply, claimChecks: variant.claimChecks },
           review: aiReview,
           validatedLearnings: validatedLearnings.slice(0, 8),
         },

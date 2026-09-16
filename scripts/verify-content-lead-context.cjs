@@ -7,6 +7,7 @@ const projectRoot = path.resolve(__dirname, '..')
 const outputDirectory = path.join(projectRoot, 'node_modules', '.tmp')
 const outputFile = path.join(outputDirectory, `acquisition-content-lead-context-${process.pid}.cjs`)
 const historyOutputFile = path.join(outputDirectory, `acquisition-content-lead-history-${process.pid}.cjs`)
+const reviewOutputFile = path.join(outputDirectory, `acquisition-content-review-${process.pid}.cjs`)
 
 const readyConfirmation = {
   aiMaterial: '未使用',
@@ -35,6 +36,15 @@ try {
     logLevel: 'silent',
   })
   buildSync({
+    entryPoints: [path.join(projectRoot, 'src/content-review.tsx')],
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    jsx: 'automatic',
+    outfile: reviewOutputFile,
+    logLevel: 'silent',
+  })
+  buildSync({
     entryPoints: [path.join(projectRoot, 'src/lead-content-context.ts')],
     bundle: true,
     platform: 'node',
@@ -45,6 +55,26 @@ try {
 
   const content = require(outputFile)
   const history = require(historyOutputFile)
+  const review = require(reviewOutputFile)
+  const draft = content.draftFromOutput({
+    draft: {
+      title: '主标题',
+      hook: '主开头',
+      outline: ['问题', '判断', '行动'],
+      body: '完整正文。',
+      callToAction: '私信发送尺寸。',
+      coverCopy: '先判断再下单',
+      visualPlan: ['镜头一', '镜头二', '镜头三'],
+      titleOptions: ['标题一', '标题二', '标题三', '标题四', '标题五'],
+      hookOptions: ['开头一', '开头二', '开头三'],
+      pinnedComment: '评论区置顶：私信发送尺寸。',
+      directMessageReply: '你好，先发城市和尺寸，我人工帮你判断。',
+    },
+  })
+  assert.equal(draft.titleOptions.length, 5, '高潜内容包应保存多个标题备选，供发布前人工选择')
+  assert.equal(draft.hookOptions.length, 3, '高潜内容包应保存多个开头备选，供发布前人工选择')
+  assert.equal(draft.pinnedComment, '评论区置顶：私信发送尺寸。', '高潜内容包应保存评论区承接文案')
+  assert.equal(draft.directMessageReply, '你好，先发城市和尺寸，我人工帮你判断。', '高潜内容包应保存私信首回文案')
   const baseTask = {
     id: 'content-task-1',
     title: '旧卫生间换智能马桶，先判断四个尺寸',
@@ -80,8 +110,25 @@ try {
   assert.equal(history.contentLeadContextForUpdatedRecord('抖音 · 原内容 · DY-001', '手动到店', snapshot, null), null, '人工更换为非内容来源时，不能保留旧内容承接快照')
   assert.equal(history.contentLeadContextForUpdatedRecord('手动到店', '抖音 · 新内容 · DY-002', null, snapshot), snapshot, '人工更换到新的已锁定内容来源时，应保存新来源的承接快照')
 
+  const platformBase = {
+    channelId: 'douyin',
+    titleOptions: ['一', '二', '三', '四', '五'],
+    hookOptions: ['甲', '乙', '丙'],
+    pinnedComment: '评论区发尺寸。',
+    directMessageReply: '先发城市和尺寸，我人工判断。',
+  }
+  assert.equal(review.evaluatePlatformContentRules(platformBase).every((item) => item.status === '通过'), true, '抖音内容包字段齐全时平台规则应全部通过')
+  const missingPlatformField = review.evaluatePlatformContentRules({ ...platformBase, directMessageReply: '' })
+  assert.equal(missingPlatformField.find((item) => item.id === 'platform-direct-message-reply')?.status, '阻断', '缺少人工私信首回时必须阻断锁定')
+  const integratedChecks = review.evaluateContentRules({ evidenceIds: [], proofPlan: '', assetRequirements: '' }, { ...platformBase, title: '', hook: '', outline: '', body: '', callToAction: '', coverCopy: '', visualPlan: '', claimChecks: [] }, [])
+  assert.equal(integratedChecks.find((item) => item.id === 'platform-direct-message-reply')?.status, '通过', '平台字段齐全时应在总评审中保留平台规则并通过')
+  assert.equal(review.evaluateContentRules({ evidenceIds: [], proofPlan: '', assetRequirements: '' }, { ...platformBase, pinnedComment: '', title: '', hook: '', outline: '', body: '', callToAction: '', coverCopy: '', visualPlan: '', claimChecks: [] }, []).find((item) => item.id === 'platform-pinned-comment')?.status, '阻断', '平台字段缺失时总评审必须出现对应阻断')
+  assert.equal(review.evaluatePlatformContentRules({ ...platformBase, channelId: 'wechat', directMessageReply: '' }).length, 0, '微信等相邻渠道不应被抖音小红书专属门槛阻断')
+  assert.doesNotThrow(() => review.contentDraftFingerprint({ title: '旧数据', hook: '', outline: '', body: '', callToAction: '', coverCopy: '', visualPlan: '' }), '旧版手工构造内容缺少新数组字段时指纹计算不应崩溃')
+
   console.log('内容线索承接快照测试通过：仅已锁定且承接完整的内容可以进入客户线索档案，后续编辑不会抹掉历史承接依据。')
 } finally {
   fs.rmSync(outputFile, { force: true })
   fs.rmSync(historyOutputFile, { force: true })
+  fs.rmSync(reviewOutputFile, { force: true })
 }

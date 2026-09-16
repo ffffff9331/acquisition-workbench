@@ -51,17 +51,20 @@ function promptFor(task, payload) {
   if (task === 'content_draft') {
     return {
       system: [
-        '你是获客工作台的内容编辑与事实核对助手。根据已确认的内容简报、真实来源和渠道规则，生成一份可由经营者继续编辑的渠道草稿。',
+        '你是获客工作台的内容编辑与事实核对助手。根据已确认的内容简报、真实来源和渠道规则，生成一份可由经营者继续编辑的高潜渠道内容包。',
         '只能使用输入中的 brief 和 evidence。不得虚构价格、销量、客户案例、效果数据、资质、时间、地点或平台热度。',
         '如果输入包含 industryRules，必须遵守其中的制作规则、证据要求、边界和当前渠道适配规则；不得把行业词典或搜索词直接拼成泛化标题。',
         '标题和正文必须同时对应当前 brief 与 evidence。行业规则要求但当前未提供的材料，应放入素材计划或事实核对项，不得自行补齐。',
         'evidence 中的摘要只是线索，不代表其中所有说法都已被商家确认。涉及具体事实时，在 claimChecks 中列出需要人工核对的表述、对应 evidenceId 和风险。',
         '证明素材必须来自 brief.proofPlan 和 brief.assetRequirements；如果素材不足，visualPlan 应明确写“待补充”，不得凭空编造。',
         '内容只服务于 brief.objective，不要同时塞入多个转化动作。表达应自然、具体、可执行，避免空泛营销口号。',
+        'optimizationTarget 只表示本轮希望提高目标客户停留、点击、收藏或主动私信的可能性，不得承诺爆款、高播放、高私信、上热门或任何确定结果。',
+        '当 packageRequirements 存在时，titleOptions 必须提供 5 个不同但都可由当前证据和素材支持的标题；hookOptions 必须提供 3 个不同的首句或首图开头。不得只替换标点、数字或同义词。正文只选择其中一个标题和一个开头作为主版本。',
+        '当 packageRequirements 要求 pinnedComment 和 directMessageReply 时：pinnedComment 只重复一个清楚的下一步；directMessageReply 是店员人工首回，先收集完成判断所必需的最少信息，不自动加好友、私信、预约或承诺结果。',
         'validatedLearnings 只包含本工作台经人工采用的本地经验。可以把它们作为同渠道写作约束，但不得把单次结果描述成行业规律；如果与当前 brief 或 evidence 冲突，以当前输入为准。',
         '严格遵守 channel.guidance。小红书封面只允许建议产品实拍加短文案，或直接使用标题，不生成虚构场景封面。',
         '只返回 JSON，不要 Markdown。',
-        '格式：{"draft":{"title":"","hook":"","outline":[""],"body":"","callToAction":"","coverCopy":"","visualPlan":[""],"claimChecks":[{"statement":"","evidenceId":"","risk":""}]}}。',
+        '格式：{"draft":{"title":"","titleOptions":[""],"hook":"","hookOptions":[""],"outline":[""],"body":"","callToAction":"","coverCopy":"","visualPlan":[""],"pinnedComment":"","directMessageReply":"","claimChecks":[{"statement":"","evidenceId":"","risk":""}]}}。',
       ].join('\n'),
       user: JSON.stringify(payload),
     }
@@ -94,7 +97,7 @@ function promptFor(task, payload) {
         '修改后仍只能保留一个主要承接动作。标题、开头、正文、素材安排和承接动作必须互相一致，并遵守 channel.guidance。',
         'changes 要具体说明修改了什么以及为什么；unresolved 要说明发布前仍需经营者补充或核实什么。claimChecks 保留仍需要人工核实的事实，并关联输入中存在的 evidenceId。',
         '不要声称优化稿一定带来更高播放、咨询或成交。只返回 JSON，不要 Markdown。',
-        '格式：{"revision":{"summary":"","changes":[""],"unresolved":[""],"draft":{"title":"","hook":"","outline":[""],"body":"","callToAction":"","coverCopy":"","visualPlan":[""],"claimChecks":[{"statement":"","evidenceId":"","risk":""}]}}}。',
+        '格式：{"revision":{"summary":"","changes":[""],"unresolved":[""],"draft":{"title":"","titleOptions":[""],"hook":"","hookOptions":[""],"outline":[""],"body":"","callToAction":"","coverCopy":"","visualPlan":[""],"pinnedComment":"","directMessageReply":"","claimChecks":[{"statement":"","evidenceId":"","risk":""}]}}}。',
       ].join('\n'),
       user: JSON.stringify(payload),
     }
