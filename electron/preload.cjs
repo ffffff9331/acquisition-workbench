@@ -17,6 +17,13 @@ contextBridge.exposeInMainWorld('workbenchDesktop', {
   system: {
     openExternal: (url) => ipcRenderer.invoke('system:open-external', url),
   },
+  assets: {
+    importFiles: () => ipcRenderer.invoke('assets:import-files'),
+    openFile: (id) => ipcRenderer.invoke('assets:open-file', id),
+    revealFile: (id) => ipcRenderer.invoke('assets:reveal-file', id),
+    deleteFile: (id) => ipcRenderer.invoke('assets:delete-file', id),
+    previewUrl: (id) => `workbench-asset://${encodeURIComponent(id)}`,
+  },
   research: {
     getSecretStatus: () => ipcRenderer.invoke('research:get-secret-status'),
     saveSearchApiKey: (apiKey) => ipcRenderer.invoke('research:save-search-api-key', apiKey),

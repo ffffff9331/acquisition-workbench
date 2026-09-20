@@ -1,10 +1,17 @@
-const { app, BrowserWindow, ipcMain, safeStorage, shell } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, net, protocol, safeStorage, shell } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
+const { pathToFileURL } = require('node:url')
 const { createOfficialServiceClient, normalizeBaseUrl } = require('./official-service.cjs')
 const { createCustomServiceClient } = require('./custom-service.cjs')
+const { createAssetLibrary } = require('./asset-library.cjs')
+const { enableSingleInstance } = require('./single-instance.cjs')
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL)
+
+function assetLibrary() {
+  return createAssetLibrary({ root: path.join(app.getPath('userData'), 'assets') })
+}
 
 function secretStorePath() {
   return path.join(app.getPath('userData'), 'ai-service-secrets.json')
@@ -157,6 +164,64 @@ function registerAIServiceHandlers() {
   })
 }
 
+function registerAssetHandlers() {
+  ipcMain.handle('assets:import-files', async () => {
+    const selection = await dialog.showOpenDialog({
+      title: '导入本机素材',
+      buttonLabel: '导入素材',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: '常用素材', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'mp4', 'mov', 'webm', 'mp3', 'pdf', 'xlsx'] },
+        { name: '所有文件', extensions: ['*'] },
+      ],
+    })
+    if (selection.canceled || !selection.filePaths.length) return { ok: true, imported: [], failures: [] }
+    try {
+      const result = await assetLibrary().importFiles(selection.filePaths)
+      return { ok: true, ...result }
+    } catch {
+      return { ok: false, message: '本机素材导入失败，请检查磁盘空间和文件夹权限。', imported: [], failures: [] }
+    }
+  })
+
+  ipcMain.handle('assets:open-file', async (_event, id) => {
+    const filePath = assetLibrary().assetPath(id)
+    if (!filePath) return { ok: false, message: '找不到已导入的本机素材。' }
+    const message = await shell.openPath(filePath)
+    return message ? { ok: false, message } : { ok: true }
+  })
+
+  ipcMain.handle('assets:reveal-file', async (_event, id) => {
+    const filePath = assetLibrary().assetPath(id)
+    if (!filePath) return { ok: false, message: '找不到已导入的本机素材。' }
+    shell.showItemInFolder(filePath)
+    return { ok: true }
+  })
+
+  ipcMain.handle('assets:delete-file', async (_event, id) => {
+    try {
+      if (!await assetLibrary().removeFile(id)) return { ok: false, message: '找不到已导入的本机素材。' }
+      return { ok: true }
+    } catch {
+      return { ok: false, message: '无法删除本机素材，请检查磁盘空间和文件夹权限。' }
+    }
+  })
+}
+
+function registerAssetProtocol() {
+  protocol.handle('workbench-asset', async (request) => {
+    try {
+      const url = new URL(request.url)
+      if (url.protocol !== 'workbench-asset:' || (url.pathname && url.pathname !== '/')) return new Response('Not found', { status: 404 })
+      const filePath = assetLibrary().assetPath(url.hostname)
+      if (!filePath) return new Response('Not found', { status: 404 })
+      return net.fetch(pathToFileURL(filePath).toString())
+    } catch {
+      return new Response('Not found', { status: 404 })
+    }
+  })
+}
+
 function safeSearchResult(value) {
   if (!value || typeof value !== 'object') return null
   const title = typeof value.title === 'string' ? value.title.trim().slice(0, 300) : ''
@@ -254,7 +319,7 @@ function createWindow() {
     minHeight: 700,
     show: false,
     backgroundColor: '#f6f7f5',
-    title: '获客工作台',
+    title: '获客运营工作台',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -276,17 +341,28 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
-  app.setAppUserModelId('com.acquisitionworkbench.desktop')
-  registerAIServiceHandlers()
-  registerResearchHandlers()
-  createWindow()
+function focusPrimaryWindow() {
+  const window = BrowserWindow.getAllWindows()[0]
+  if (!window) return
+  if (window.isMinimized()) window.restore()
+  window.focus()
+}
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+if (enableSingleInstance(app, focusPrimaryWindow)) {
+  app.whenReady().then(() => {
+    app.setAppUserModelId('com.acquisitionworkbench.desktop')
+    registerAIServiceHandlers()
+    registerAssetHandlers()
+    registerResearchHandlers()
+    registerAssetProtocol()
+    createWindow()
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
   })
-})
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit()
+  })
+}

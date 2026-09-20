@@ -22,6 +22,14 @@ declare global {
     score: number
   }
 
+  type DesktopImportedAsset = {
+    id: string
+    name: string
+    mimeType: string
+    size: number
+    createdAt: string
+  }
+
   type DesktopCreditAccountData = {
     account: {
       workspaceId: string
@@ -68,6 +76,13 @@ declare global {
       }
       system: {
         openExternal: (url: string) => Promise<{ ok: boolean; message?: string }>
+      }
+      assets: {
+        importFiles: () => Promise<{ ok: boolean; imported: DesktopImportedAsset[]; failures: Array<{ name: string; message: string }> }>
+        openFile: (id: string) => Promise<{ ok: boolean; message?: string }>
+        revealFile: (id: string) => Promise<{ ok: boolean; message?: string }>
+        deleteFile: (id: string) => Promise<{ ok: boolean; message?: string }>
+        previewUrl: (id: string) => string
       }
       research: {
         getSecretStatus: () => Promise<DesktopResearchSecretStatus>

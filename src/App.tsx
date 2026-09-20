@@ -46,8 +46,10 @@ import { leadWorkQueue } from './lead-work-queue'
 import { firstResponseDeadline, firstResponseSlaLabel, firstResponseSlaStatus, normalizeFirstResponseTarget, nowLocalDateTime } from './lead-response-sla'
 import { trafficCampaignQueue } from './traffic-campaign-queue'
 import type { IndustryRulePack } from './industry-rules'
+import { OperationsHub } from './operations-hub'
+import { emptyOperationsData, normalizeOperationsData, pruneOperationsContentLinks, type OperationsData } from './operations-core'
 
-type View = 'workspace' | 'acquisition' | 'leads' | 'intents' | 'customers' | 'review'
+type View = 'workspace' | 'acquisition' | 'operations' | 'leads' | 'intents' | 'customers' | 'review'
 type Stage = 'lead' | 'intent' | 'customer' | 'lost'
 type RecordStatus = '待判断' | '待联系' | '已预约' | '方案中' | '报价中' | '服务中' | '待回访' | '稳定客户' | '已放弃'
 
@@ -102,14 +104,15 @@ type ChannelTask = {
 type SourceOption = { id: string; label: string }
 type ContentLeadSourceOption = { source: string; sourceCode: string; context: ContentLeadContext }
 
-type WorkspaceData = { records: CustomerRecord[]; events: CustomerStageEvent[]; enabledChannels: ChannelId[]; installedIndustryPacks: string[]; activeIndustryPackId: string; installedTacticPacks: string[]; activeTacticPackId: string; deliveryPackArtifacts: string[]; installationId: string; channelTasks: ChannelTask[]; topicResearch: TopicResearchData; contentProduction: ContentProductionData; douyin: DouyinData; xiaohongshu: XiaohongshuData; wechat: WechatData; offline: OfflineData; referral: ReferralData; bilibili: BilibiliData }
+type WorkspaceData = { records: CustomerRecord[]; events: CustomerStageEvent[]; enabledChannels: ChannelId[]; installedIndustryPacks: string[]; activeIndustryPackId: string; installedTacticPacks: string[]; activeTacticPackId: string; deliveryPackArtifacts: string[]; installationId: string; channelTasks: ChannelTask[]; topicResearch: TopicResearchData; contentProduction: ContentProductionData; operations: OperationsData; douyin: DouyinData; xiaohongshu: XiaohongshuData; wechat: WechatData; offline: OfflineData; referral: ReferralData; bilibili: BilibiliData }
 
 const STORAGE_KEY = 'acquisition-workbench-core-v1'
-const emptyData: WorkspaceData = { records: [], events: [], enabledChannels: [], installedIndustryPacks: [], activeIndustryPackId: '', installedTacticPacks: [], activeTacticPackId: '', deliveryPackArtifacts: [], installationId: '', channelTasks: [], topicResearch: emptyTopicResearchData, contentProduction: emptyContentProductionData, douyin: emptyDouyinData, xiaohongshu: emptyXiaohongshuData, wechat: emptyWechatData, offline: emptyOfflineData, referral: emptyReferralData, bilibili: emptyBilibiliData }
+const emptyData: WorkspaceData = { records: [], events: [], enabledChannels: [], installedIndustryPacks: [], activeIndustryPackId: '', installedTacticPacks: [], activeTacticPackId: '', deliveryPackArtifacts: [], installationId: '', channelTasks: [], topicResearch: emptyTopicResearchData, contentProduction: emptyContentProductionData, operations: emptyOperationsData, douyin: emptyDouyinData, xiaohongshu: emptyXiaohongshuData, wechat: emptyWechatData, offline: emptyOfflineData, referral: emptyReferralData, bilibili: emptyBilibiliData }
 
 const navItems: Array<{ id: View; label: string; icon: ReactNode }> = [
-  { id: 'workspace', label: '工作台', icon: <Target size={18} /> },
-  { id: 'acquisition', label: '获客', icon: <Send size={18} /> },
+  { id: 'workspace', label: '今日工作', icon: <Target size={18} /> },
+  { id: 'acquisition', label: '需求与机会', icon: <Search size={18} /> },
+  { id: 'operations', label: '运营', icon: <FolderPlus size={18} /> },
   { id: 'leads', label: '线索', icon: <MessageSquareMore size={18} /> },
   { id: 'intents', label: '意向客户', icon: <UsersRound size={18} /> },
   { id: 'customers', label: '客户', icon: <Check size={18} /> },
@@ -257,6 +260,7 @@ function loadData(): WorkspaceData {
     const bilibili = normalizeBilibiliData(parsed.bilibili, channelTasks)
     const topicResearch = normalizeTopicResearchData(parsed.topicResearch)
     const contentProduction = normalizeContentProductionData(parsed.contentProduction)
+    const operations = normalizeOperationsData(parsed.operations)
     const events = normalizeCustomerStageEvents(parsed.events)
     return {
       records: parsed.records.filter((record) => record && typeof record.name === 'string').map((record) => ({
@@ -289,6 +293,7 @@ function loadData(): WorkspaceData {
       channelTasks,
       topicResearch,
       contentProduction,
+      operations,
       douyin,
       xiaohongshu,
       wechat,
@@ -967,6 +972,11 @@ function App() {
     setSidebarOpen(false)
   }
 
+  const openContentProduction = () => {
+    switchView('acquisition')
+    window.setTimeout(() => document.getElementById('content-production')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
+  }
+
   const page = (() => {
     if (view === 'workspace') {
       return <WorkspacePage records={activeRecords} events={data.events} topicResearch={data.topicResearch} performanceByOpportunity={opportunityPerformance} leads={leadCount} intents={intentCount} customers={customerCount} channelCount={enabledChannels.length} onAddLead={() => openRecordDialog('lead')} onOpenRecord={setEditingRecord} onAddEvent={openCustomerStageEvent} onNavigate={switchView} />
@@ -981,7 +991,8 @@ function App() {
       if (channel.id === 'bilibili') return <BilibiliWorkspace data={data.bilibili} records={data.records} onChange={(updater) => setData((current) => ({ ...current, bilibili: updater(current.bilibili) }))} onBack={() => setActiveChannelId(null)} onAddLead={(source) => openRecordDialog('lead', source, channel.id)} onToast={showToast} />
       return <ChannelWorkspacePage channel={channel} tasks={data.channelTasks.filter((task) => task.channelId === channel.id)} records={data.records} onBack={() => setActiveChannelId(null)} onAddTask={() => setTaskChannelId(channel.id)} onEditTask={setEditingTask} onAdvanceTask={advanceChannelTask} onAddLead={() => openRecordDialog('lead', '', channel.id)} />
     }
-    if (view === 'acquisition') return <AcquisitionPage topicResearch={data.topicResearch} contentProduction={data.contentProduction} industryPack={activeIndustryPack} activeIndustryPackId={data.activeIndustryPackId} tacticPack={activeTacticPack} activeTacticPackId={data.activeTacticPackId} aiSettings={aiSettings} aiSecrets={aiSecrets} enabledChannels={data.enabledChannels} installedIndustryPacks={data.installedIndustryPacks} installedTacticPacks={data.installedTacticPacks} installationId={data.installationId} importedSolutionPackIds={verifiedDeliveryPacks.map((pack) => pack.solutionPack.id)} availableIndustryPacks={availableIndustryPacks} availableTacticPacks={availableTacticPacks} performanceByOpportunity={opportunityPerformance} onTopicResearchChange={(updater) => setData((current) => ({ ...current, topicResearch: updater(current.topicResearch) }))} onContentProductionChange={(updater) => setData((current) => ({ ...current, contentProduction: updater(current.contentProduction) }))} onToast={showToast} onOpenAIService={() => setAIServiceOpen(true)} onOfficialUsage={(usage) => setCreditAccount((current) => current ? { ...current, balance: usage.balanceAfter, updatedAt: '' } : current)} onAdoptOpportunity={adoptResearchOpportunity} onImportDeliveryPack={importDeliveryPack} onApplyDeliveryConfiguration={applyDeliveryConfiguration} onActivateIndustryRules={activateIndustryRules} onActivateTacticPack={activateTacticPack} onOpenChannel={setActiveChannelId} />
+    if (view === 'acquisition') return <AcquisitionPage topicResearch={data.topicResearch} contentProduction={data.contentProduction} industryPack={activeIndustryPack} activeIndustryPackId={data.activeIndustryPackId} tacticPack={activeTacticPack} activeTacticPackId={data.activeTacticPackId} aiSettings={aiSettings} aiSecrets={aiSecrets} enabledChannels={data.enabledChannels} installedIndustryPacks={data.installedIndustryPacks} installedTacticPacks={data.installedTacticPacks} installationId={data.installationId} importedSolutionPackIds={verifiedDeliveryPacks.map((pack) => pack.solutionPack.id)} availableIndustryPacks={availableIndustryPacks} availableTacticPacks={availableTacticPacks} performanceByOpportunity={opportunityPerformance} onTopicResearchChange={(updater) => setData((current) => ({ ...current, topicResearch: updater(current.topicResearch) }))} onContentProductionChange={(updater) => setData((current) => { const contentProduction = updater(current.contentProduction); return { ...current, contentProduction, operations: pruneOperationsContentLinks(current.operations, contentProduction.tasks.map((task) => task.id)) } })} onToast={showToast} onOpenAIService={() => setAIServiceOpen(true)} onOfficialUsage={(usage) => setCreditAccount((current) => current ? { ...current, balance: usage.balanceAfter, updatedAt: '' } : current)} onAdoptOpportunity={adoptResearchOpportunity} onImportDeliveryPack={importDeliveryPack} onApplyDeliveryConfiguration={applyDeliveryConfiguration} onActivateIndustryRules={activateIndustryRules} onActivateTacticPack={activateTacticPack} onOpenChannel={setActiveChannelId} />
+    if (view === 'operations') return <OperationsHub data={data.operations} contentProduction={data.contentProduction} opportunityCount={data.topicResearch.generatedTopics.length} leadCount={leadCount} intentCount={intentCount} customerCount={customerCount} onChange={(updater) => setData((current) => ({ ...current, operations: updater(current.operations) }))} onOpenAcquisition={() => switchView('acquisition')} onOpenLeads={() => switchView('leads')} onOpenContent={openContentProduction} onToast={showToast} />
     if (view === 'review') return <ReviewPage records={data.records} events={data.events} onNavigate={switchView} />
     const stage = stageForView(view)
     if (!stage) return null
@@ -990,12 +1001,12 @@ function App() {
 
   return <div className="app-shell">
     <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
-      <div className="sidebar-brand"><span className="brand-mark"><Target size={20} /></span><div><strong>获客工作台</strong><span>客户增长管理</span></div><button className="mobile-close icon-button" type="button" onClick={() => setSidebarOpen(false)} aria-label="关闭菜单"><X size={18} /></button></div>
+      <div className="sidebar-brand"><span className="brand-mark"><Target size={20} /></span><div><strong>获客运营工作台</strong><span>内容、客户与增长复盘</span></div><button className="mobile-close icon-button" type="button" onClick={() => setSidebarOpen(false)} aria-label="关闭菜单"><X size={18} /></button></div>
       <nav className="sidebar-nav" aria-label="主导航">{navItems.map((item) => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => switchView(item.id)}>{item.icon}<span>{item.label}</span>{item.id === 'leads' && leadCount > 0 && <b>{leadCount}</b>}{item.id === 'intents' && intentCount > 0 && <b>{intentCount}</b>}</button>)}</nav>
       <div className="sidebar-note"><span>本地保存</span><p>数据保存在这台电脑中。</p></div>
     </aside>
     <main className="main-area">
-      <header className="topbar"><button className="mobile-menu icon-button" type="button" onClick={() => setSidebarOpen(true)} aria-label="打开菜单"><Menu size={19} /></button><div className="breadcrumbs"><span>客户增长</span><ChevronRight size={14} /><strong>{activeChannelId ? channelById(activeChannelId).shortLabel : navItems.find((item) => item.id === view)?.label}</strong></div><div className="topbar-right">{aiSettings.mode === 'official' && <button className={`credit-account-button ${creditAccount ? 'loaded' : ''}`} type="button" onClick={() => setCreditAccountOpen(true)}><Coins size={15} /><span>{creditAccount ? `${new Intl.NumberFormat('zh-CN').format(creditAccount.balance)} 积分` : '积分账户'}</span></button>}<button className={`ai-service-button ${aiSettings.mode === 'official' && aiSecrets.officialTokenSaved || aiSettings.mode === 'custom' && aiSecrets.customApiKeySaved ? 'configured' : ''}`} type="button" onClick={() => setAIServiceOpen(true)}><Sparkles size={15} /><span>AI 服务</span></button><span className="save-state"><span></span>已自动保存</span></div></header>
+      <header className="topbar"><button className="mobile-menu icon-button" type="button" onClick={() => setSidebarOpen(true)} aria-label="打开菜单"><Menu size={19} /></button><div className="breadcrumbs"><span>获客运营</span><ChevronRight size={14} /><strong>{activeChannelId ? channelById(activeChannelId).shortLabel : navItems.find((item) => item.id === view)?.label}</strong></div><div className="topbar-right">{aiSettings.mode === 'official' && <button className={`credit-account-button ${creditAccount ? 'loaded' : ''}`} type="button" onClick={() => setCreditAccountOpen(true)}><Coins size={15} /><span>{creditAccount ? `${new Intl.NumberFormat('zh-CN').format(creditAccount.balance)} 积分` : '积分账户'}</span></button>}<button className={`ai-service-button ${aiSettings.mode === 'official' && aiSecrets.officialTokenSaved || aiSettings.mode === 'custom' && aiSecrets.customApiKeySaved ? 'configured' : ''}`} type="button" onClick={() => setAIServiceOpen(true)}><Sparkles size={15} /><span>AI 服务</span></button><span className="save-state"><span></span>已自动保存</span></div></header>
       <div className="page-wrap" key={view}>{page}</div>
     </main>
     {dialogStage && <RecordDialog stage={dialogStage} sourceOptions={activeSources} contentLeadSourceOptions={contentLeadSourceOptions} defaultSource={recordSourcePreset} tacticPack={growthTacticPackById(recordTacticPackId)} onClose={() => { setDialogStage(null); setRecordSourcePreset(''); setRecordTacticPackId('') }} onSubmit={(formData) => addRecord(formData, dialogStage)} />}
